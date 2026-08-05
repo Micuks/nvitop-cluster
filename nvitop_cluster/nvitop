@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""nvitop wrapper: optional multi-node cluster view + container PID remap."""
+import os
+import sys
+
+_TOOL = os.environ.get(
+    "NVITOP_CLUSTER_HOME",
+    os.path.dirname(os.path.abspath(__file__)),
+)
+if _TOOL not in sys.path:
+    sys.path.insert(0, _TOOL)
+
+def _wants_cluster(argv):
+    if os.environ.get("NVITOP_CLUSTER", "").strip() in ("1", "true", "yes", "auto"):
+        if os.environ.get("NVITOP_CLUSTER", "").strip() == "auto":
+            return _hostfile_is_multi()
+        return True
+    return any(a in ("--cluster", "-c", "--all-nodes", "--hostfile-cluster") for a in argv)
+
+def _hostfile_is_multi():
+    for p in ("/etc/mpi/hostfile", "/etc/mpi/mpi-hostfile"):
+        if not os.path.isfile(p):
+            continue
+        hosts = []
+        for line in open(p):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            h = line.split()[0].split(":")[0]
+            if h not in hosts:
+                hosts.append(h)
+        return len(hosts) > 1
+    return False
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    if _wants_cluster(argv):
+        cluster_argv = [a for a in argv if a not in ("--cluster", "-c", "--all-nodes", "--hostfile-cluster")]
+        from nvitop_cluster import main as cluster_main
+        raise SystemExit(cluster_main(cluster_argv))
+
+    try:
+        import nvitop_pid_map
+        nvitop_pid_map.patch_nvitop()
+    except Exception as exc:
+        if os.environ.get("NVITOP_PID_MAP_DEBUG"):
+            sys.stderr.write(f"[nvitop-container] patch failed: {exc}\n")
+
+    from nvitop.cli import main
+    raise SystemExit(main())
