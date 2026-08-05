@@ -24,29 +24,54 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 
 ## Install
 
+Zero third-party Python deps (stdlib only). Needs **Python ≥ 3.9**, **`nvidia-smi`** on each node, and **SSH to peers** for multi-node.
+
+### pip / uv (recommended)
+
+```bash
+# one-liner from GitHub (works now, no PyPI account needed on your side)
+pip install "git+https://github.com/Micuks/nvitop-cluster.git"
+# or
+uv pip install "git+https://github.com/Micuks/nvitop-cluster.git"
+
+# one-shot (no persistent install)
+uvx --from "git+https://github.com/Micuks/nvitop-cluster.git" nvitop-cluster
+
+# PyPI (after a release is published)
+pip install nvitop-cluster
+```
+
+Then:
+
+```bash
+nvitop-cluster
+# or
+python -m nvitop_cluster
+```
+
+**Multi-node tip:** either install the package in the **same image/env on every rank**, or put the repo on a shared path and set `NVITOP_CLUSTER_HOME` so remote SSH probes can find the script.
+
+### From source (no install)
+
 ```bash
 git clone https://github.com/Micuks/nvitop-cluster.git
 cd nvitop-cluster
-# optional: symlink into PATH
-ln -sf "$PWD/nvitop_cluster/nvitop_cluster.py" ~/.local/bin/nvitop-cluster
-chmod +x nvitop_cluster/nvitop_cluster.py
+python3 -m nvitop_cluster
+# or
+./nvitop-cluster
 ```
-
-Requires: Python 3.9+, `nvidia-smi` on each node, SSH to peers (for multi-node).
 
 Optional (local interactive nvitop + container PID fix):
 
 ```bash
-pip install nvitop
-# then use the wrapper entry: nvitop_cluster/nvitop --cluster
+pip install 'nvitop-cluster[nvitop]'
+# then: nvitop_cluster/nvitop --cluster
 ```
 
 ## Usage
 
 ```bash
 # multi-node table (default: watch 2s)
-python3 nvitop_cluster/nvitop_cluster.py
-# or
 nvitop-cluster
 
 # once
@@ -56,9 +81,8 @@ nvitop-cluster -1
 nvitop-cluster -f /path/to/hostfile
 export NVITOP_CLUSTER_SSH_CONFIG=~/.ssh/config
 
-# via nvitop-compatible wrapper
-python3 nvitop_cluster/nvitop --cluster
-python3 nvitop_cluster/nvitop --cluster -1 --cmd-align right
+# via nvitop-compatible wrapper (optional extra)
+python3 -m nvitop_cluster  # same as nvitop-cluster
 ```
 
 ### Hostfile format

@@ -1,0 +1,29 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # trusted publishing (no long-lived token)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build
+        run: uv build
+
+      - name: Publish
+        # Configure Trusted Publisher on https://pypi.org/manage/account/publishing/
+        #   owner: Micuks  repo: nvitop-cluster  workflow: publish.yml  environment: pypi
+        run: uv publish

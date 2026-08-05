@@ -34,13 +34,32 @@ _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.environ.get("NVITOP_CLUSTER_HOME", _PKG_DIR)
 SSH_CFG = os.environ.get("NVITOP_CLUSTER_SSH_CONFIG", "/etc/kml/ssh/ssh_config")
 PROBE = os.path.join(TOOL, "nvitop_cluster_probe.py")
-PROBE_CMD = (
-    "if [ -x /opt/conda/envs/py312/bin/python3 ]; then "
-    "PY=/opt/conda/envs/py312/bin/python3; "
-    "elif command -v python3 >/dev/null 2>&1; then PY=python3; "
-    "else PY=python; fi; "
-    f"$PY {PROBE}"
-)
+
+
+def _probe_shell_cmd() -> str:
+    """Portable shell snippet: run probe via installed module or script path.
+
+    On multi-node jobs, peers need either:
+      - the same package installed (``pip install nvitop-cluster`` in the image), or
+      - the probe script at ``NVITOP_CLUSTER_HOME`` / package path (e.g. shared FS).
+    """
+    # Quote path for remote shells; keep ASCII-safe.
+    probe_q = PROBE.replace("'", "'\"'\"'")
+    return (
+        "if [ -x /opt/conda/envs/py312/bin/python3 ]; then "
+        "PY=/opt/conda/envs/py312/bin/python3; "
+        "elif command -v python3 >/dev/null 2>&1; then PY=python3; "
+        "else PY=python; fi; "
+        "if $PY -c 'import nvitop_cluster.nvitop_cluster_probe' >/dev/null 2>&1; then "
+        "$PY -m nvitop_cluster.nvitop_cluster_probe; "
+        f"elif [ -f '{probe_q}' ]; then $PY '{probe_q}'; "
+        "else echo 'nvitop-cluster: probe not found "
+        "(pip install nvitop-cluster on each node, or set NVITOP_CLUSTER_HOME)' >&2; "
+        "exit 127; fi"
+    )
+
+
+PROBE_CMD = _probe_shell_cmd()
 
 
 def _local_ips() -> set:
@@ -621,8 +640,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Empty hostfile: {hf}", file=sys.stderr)
         return 2
 
-    if not os.path.isfile(PROBE):
-        print(f"Missing probe script: {PROBE}", file=sys.stderr)
+    probe_ok = os.path.isfile(PROBE)
+    if not probe_ok:
+        try:
+            import importlib.util
+
+            probe_ok = importlib.util.find_spec("nvitop_cluster.nvitop_cluster_probe") is not None
+        except Exception:
+            probe_ok = False
+    if not probe_ok:
+        print(
+            f"Missing probe (script {PROBE} or package nvitop_cluster). "
+            "Install with: pip install nvitop-cluster",
+            file=sys.stderr,
+        )
         return 2
 
     color_on = (not args.no_color) and sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"

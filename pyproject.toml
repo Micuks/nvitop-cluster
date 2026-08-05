@@ -12,11 +12,21 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "wuqingliu" }]
 keywords = ["gpu", "nvidia", "nvitop", "cluster", "mpi", "monitoring"]
 classifiers = [
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
+  "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: System :: Monitoring",
+  "Topic :: System :: Systems Administration",
 ]
 dependencies = []
 
@@ -29,6 +39,11 @@ nvitop-cluster = "nvitop_cluster.nvitop_cluster:main"
 [project.urls]
 Homepage = "https://github.com/Micuks/nvitop-cluster"
 Repository = "https://github.com/Micuks/nvitop-cluster"
+Issues = "https://github.com/Micuks/nvitop-cluster/issues"
+Changelog = "https://github.com/Micuks/nvitop-cluster/releases"
 
 [tool.setuptools]
 packages = ["nvitop_cluster"]
+
+[tool.setuptools.package-data]
+nvitop_cluster = ["py.typed"]

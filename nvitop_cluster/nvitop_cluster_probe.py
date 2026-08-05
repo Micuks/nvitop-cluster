@@ -16,8 +16,25 @@ TOOL = os.environ.get(
     "NVITOP_CLUSTER_HOME",
     os.path.dirname(os.path.abspath(__file__)),
 )
+# Allow `python path/to/nvitop_cluster_probe.py` (script mode) and package mode.
 if TOOL not in sys.path:
     sys.path.insert(0, TOOL)
+
+
+def _import_pid_map():
+    """Load pid-map helper (package install or adjacent script layout)."""
+    try:
+        from nvitop_cluster import nvitop_pid_map as pm  # type: ignore
+
+        return pm
+    except Exception:
+        pass
+    try:
+        import nvitop_pid_map as pm  # type: ignore
+
+        return pm
+    except Exception:
+        return None
 
 
 def _run(cmd: str) -> str:
@@ -90,10 +107,9 @@ def _cmdline(pid: int) -> str:
 
 def _proc_rows(uuid_to_index: dict) -> list:
     # Prefer pid-map resolution (host NVML pid -> container pid)
+    pm = _import_pid_map()
     try:
-        import nvitop_pid_map as pm  # type: ignore
-
-        mapping = pm.build_host_to_local_map(force=True)
+        mapping = pm.build_host_to_local_map(force=True) if pm else {}
     except Exception:
         mapping = {}
 
@@ -118,13 +134,13 @@ def _proc_rows(uuid_to_index: dict) -> list:
             # direct visibility or resolve helper
             if os.path.exists(f"/proc/{host_pid}"):
                 local_pid = host_pid
-            else:
+            elif pm is not None:
                 try:
-                    import nvitop_pid_map as pm  # type: ignore
-
                     local_pid = pm.resolve_local_pid(host_pid)
                 except Exception:
                     local_pid = host_pid
+            else:
+                local_pid = host_pid
 
         if local_pid and os.path.exists(f"/proc/{local_pid}"):
             cmd = _cmdline(local_pid)
