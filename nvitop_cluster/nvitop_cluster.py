@@ -132,37 +132,23 @@ def run_probe(host: str, local: bool) -> Tuple[str, Optional[dict], Optional[str
         return host, None, str(e)[:200]
 
 
-def bar(pct: float, width: int = 10, *, partial: bool = True) -> str:
-    """Unicode bar; with partial=True uses ▏-▉ for sub-cell resolution."""
+def bar(pct: float, width: int = 10, *, partial: bool = False) -> str:
+    """Fixed-width bar using only full cells (█/░).
+
+    Partial block glyphs (▏–▉) are intentionally disabled: many terminal fonts
+    give them non-cell widths, which leaves uneven gaps between used/free.
+    """
     pct = max(0.0, min(100.0, float(pct)))
     width = max(1, int(width))
-    if not partial:
-        filled = int(round(pct / 100.0 * width))
-        filled = min(width, max(0, filled))
-        return "█" * filled + "░" * (width - filled)
-    # eighths for smoother look; partials index 0 unused, 1..7 = ▏..▉
-    cells = pct / 100.0 * width
-    full = int(cells)
-    frac = cells - full
-    partials = " ▏▎▍▌▋▊▉"  # len 8, valid indices 0..7
-    frac_i = int(round(frac * 8))
-    if frac_i >= 8:  # round-up to next full cell
-        full += 1
-        frac_i = 0
-    full = min(width, max(0, full))
-    if full >= width:
-        return "█" * width
-    body = "█" * full
-    if frac_i > 0 and full < width:
-        body += partials[min(frac_i, 7)]
-        full += 1
-    return body + "░" * (width - full)
+    filled = int(round(pct / 100.0 * width))
+    filled = min(width, max(0, filled))
+    return "█" * filled + "░" * (width - filled)
 
 
 def color(s: str, code: str, enable: bool) -> str:
     if not enable:
         return s
-    return f"\033[{code}m{s}\033[0m"
+    return f"[{code}m{s}[0m"
 
 
 def level_code(pct: float) -> str:
@@ -180,7 +166,16 @@ def util_color(u: float, enable: bool) -> str:
 
 
 def bar_color(pct: float, width: int, enable: bool) -> str:
-    return color(bar(pct, width), level_code(pct), enable)
+    """Color used (█) by level; free (░) always dim — clean used|free boundary."""
+    pct = max(0.0, min(100.0, float(pct)))
+    width = max(1, int(width))
+    filled = int(round(pct / 100.0 * width))
+    filled = min(width, max(0, filled))
+    used = "█" * filled
+    free = "░" * (width - filled)
+    if not enable:
+        return used + free
+    return color(used, level_code(pct), True) + color(free, "90", True)
 
 
 def short_gpu_name(name: str) -> str:
