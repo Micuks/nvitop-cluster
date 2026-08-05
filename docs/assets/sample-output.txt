@@ -1,39 +1,39 @@
- nvitop-cluster │ hosts=2  gpus=16  procs=16  avg-util=62%  avg-mem=34%  CMD[HEAD]  17:40:04
+ nvitop-cluster │ hosts=2  gpus=16  procs=16  avg-util=56%  avg-mem=32%  CMD[HEAD]  20:52:59
 HOST             GPU TYPE               GPU-Util                             Memory-Usage                TEMP    PWR      PID
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-─ 10.82.113.167* local ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-10.82.113.167*     0 H100  ████████████▍░░░░░░░░░░░░░░░  44.0%  ███████▊░░░░░░░░░░░░░░░░░░░░   28% 22.1/80Gi   46C  291W    77811
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=0 --fname…
-10.82.113.167*     1 H100  ████████████▉░░░░░░░░░░░░░░░  46.0%  ███████▊░░░░░░░░░░░░░░░░░░░░   28% 22.2/80Gi   38C  260W    77813
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=1 --fname…
-10.82.113.167*     2 H100  ███████████████▍░░░░░░░░░░░░  55.0%  ███████▉░░░░░░░░░░░░░░░░░░░░   28% 22.4/80Gi   39C  299W    77814
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=2 --fname…
-10.82.113.167*     3 H100  ██████████████░░░░░░░░░░░░░░  50.0%  ███████▉░░░░░░░░░░░░░░░░░░░░   28% 22.2/80Gi   47C  344W    77816
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=3 --fname…
-10.82.113.167*     4 H100  ██████████████░░░░░░░░░░░░░░  50.0%  ███████████▍░░░░░░░░░░░░░░░░   41% 32.4/80Gi   44C  250W    77815
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=3 --fname cvg…
-10.82.113.167*     5 H100  ████████████████████▌░░░░░░░  73.0%  ███████████▎░░░░░░░░░░░░░░░░   40% 32.1/80Gi   68C  286W    77809
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=0 --fname cvg…
-10.82.113.167*     6 H100  ██████████████████▌░░░░░░░░░  66.0%  ███████████▎░░░░░░░░░░░░░░░░   40% 32.2/80Gi   37C  268W    77812
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=2 --fname cvg…
-10.82.113.167*     7 H100  ██████████████████████▍░░░░░  80.0%  ███████████▎░░░░░░░░░░░░░░░░   40% 31.9/80Gi   43C  234W    77810
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=1 --fname cvg…
-─ 10.82.113.213 remote ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-10.82.113.213      0 H800  ████████████████████████████ 100.0%  ███████▊░░░░░░░░░░░░░░░░░░░░   28% 22.1/80Gi   46C  128W    65968
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=0 --fname…
-10.82.113.213      1 H800  ████████████████████████████ 100.0%  ███████▊░░░░░░░░░░░░░░░░░░░░   28% 22.2/80Gi   38C  127W    65969
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=1 --fname…
-10.82.113.213      2 H800  ████████████▋░░░░░░░░░░░░░░░  45.0%  ███████▉░░░░░░░░░░░░░░░░░░░░   28% 22.4/80Gi   45C  308W    65970
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=2 --fname…
-10.82.113.213      3 H800  ████████████████████████████ 100.0%  ███████▉░░░░░░░░░░░░░░░░░░░░   28% 22.2/80Gi   49C  131W    65971
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp4_truepack/jepa/app/video_temporal/launch.py --local_rank=3 --fname…
-10.82.113.213      4 H800  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%  ███████████▍░░░░░░░░░░░░░░░░   40% 32.2/80Gi   49C  212W    65975
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=3 --fname cvg…
-10.82.113.213      5 H800  ████████████████████████▍░░░  87.0%  ███████████▍░░░░░░░░░░░░░░░░   41% 32.3/80Gi   37C  174W    65974
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=2 --fname cvg…
-10.82.113.213      6 H800  ████████████████████████████ 100.0%  ███████████▍░░░░░░░░░░░░░░░░   40% 32.2/80Gi   38C  193W    65972
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=0 --fname cvg…
-10.82.113.213      7 H800  ▎░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.0%  ███████████▎░░░░░░░░░░░░░░░░   40% 31.9/80Gi   52C  217W    65973
-    │ root  cvgoal_sources/siglip_trainable_text_exact_grad_20260805_143000/cp1_jepa/jepa/app/video_temporal/launch.py --local_rank=1 --fname cvg…
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+─ 10.82.113.167* local ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+10.82.113.167*     0 H100  ████████████████████████████ 100.0%  ████████░░░░░░░░░░░░░░░░░░░░   28% 22.4/80Gi   38C  119W   286811
+    │ root  train/exp_a/launch.py --local_rank=0 --fname runs/exp_a/config.yaml
+10.82.113.167*     1 H100  ████████████████████████████ 100.0%  ████████░░░░░░░░░░░░░░░░░░░░   29% 22.8/80Gi   32C  117W   286812
+    │ root  train/exp_a/launch.py --local_rank=1 --fname runs/exp_a/config.yaml
+10.82.113.167*     2 H100  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%  ████████░░░░░░░░░░░░░░░░░░░░   28% 22.4/80Gi   33C  116W   286818
+    │ root  train/exp_b/launch.py --local_rank=2 --fname runs/exp_b/config.yaml
+10.82.113.167*     3 H100  ████████████████████████████ 100.0%  ████████░░░░░░░░░░░░░░░░░░░░   29% 23.4/80Gi   37C  120W   286814
+    │ root  train/exp_a/launch.py --local_rank=3 --fname runs/exp_a/config.yaml
+10.82.113.167*     4 H100  █░░░░░░░░░░░░░░░░░░░░░░░░░░░   2.0%  ██████████░░░░░░░░░░░░░░░░░░   36% 28.4/80Gi   42C  294W   286816
+    │ root  train/exp_b/launch.py --local_rank=0 --fname runs/exp_b/config.yaml
+10.82.113.167*     5 H100  █░░░░░░░░░░░░░░░░░░░░░░░░░░░   4.0%  ██████████░░░░░░░░░░░░░░░░░░   35% 28.1/80Gi   66C  349W   286817
+    │ root  train/exp_b/launch.py --local_rank=1 --fname runs/exp_b/config.yaml
+10.82.113.167*     6 H100  █░░░░░░░░░░░░░░░░░░░░░░░░░░░   3.0%  ██████████░░░░░░░░░░░░░░░░░░   35% 28.2/80Gi   35C  286W   286813
+    │ root  train/exp_a/launch.py --local_rank=2 --fname runs/exp_a/config.yaml
+10.82.113.167*     7 H100  █░░░░░░░░░░░░░░░░░░░░░░░░░░░   2.0%  ██████████░░░░░░░░░░░░░░░░░░   35% 27.8/80Gi   41C  276W   286819
+    │ root  train/exp_b/launch.py --local_rank=3 --fname runs/exp_b/config.yaml
+─ 10.82.113.213 remote ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+10.82.113.213      0 H800  ████████████████████████████ 100.0%  ██████████░░░░░░░░░░░░░░░░░░   36% 28.7/80Gi   47C  211W   282919
+    │ root  train/exp_a/launch.py --local_rank=0 --fname runs/exp_a/config.yaml
+10.82.113.213      1 H800  ████████████████████░░░░░░░░  73.0%  ██████████░░░░░░░░░░░░░░░░░░   35% 28.2/80Gi   39C  163W   282921
+    │ root  train/exp_a/launch.py --local_rank=1 --fname runs/exp_a/config.yaml
+10.82.113.213      2 H800  ████████████████████░░░░░░░░  71.0%  ██████████░░░░░░░░░░░░░░░░░░   35% 27.9/80Gi   39C  200W   282923
+    │ root  train/exp_a/launch.py --local_rank=2 --fname runs/exp_a/config.yaml
+10.82.113.213      3 H800  █████████████████░░░░░░░░░░░  60.0%  ██████████░░░░░░░░░░░░░░░░░░   35% 27.8/80Gi   51C  179W   282926
+    │ root  train/exp_a/launch.py --local_rank=3 --fname runs/exp_a/config.yaml
+10.82.113.213      4 H800  ███████████░░░░░░░░░░░░░░░░░  38.0%  ████████░░░░░░░░░░░░░░░░░░░░   28% 22.4/80Gi   48C  276W   282922
+    │ root  train/exp_b/launch.py --local_rank=1 --fname runs/exp_b/config.yaml
+10.82.113.213      5 H800  ████████████████████████████ 100.0%  ████████░░░░░░░░░░░░░░░░░░░░   29% 22.8/80Gi   35C  150W   282920
+    │ root  train/exp_b/launch.py --local_rank=0 --fname runs/exp_b/config.yaml
+10.82.113.213      6 H800  ████████████████████████████ 100.0%  ████████░░░░░░░░░░░░░░░░░░░░   28% 22.4/80Gi   36C  152W   282924
+    │ root  train/exp_b/launch.py --local_rank=2 --fname runs/exp_b/config.yaml
+10.82.113.213      7 H800  ██████████░░░░░░░░░░░░░░░░░░  37.0%  ████████░░░░░░░░░░░░░░░░░░░░   29% 23.4/80Gi   51C  269W   282925
+    │ root  train/exp_b/launch.py --local_rank=3 --fname runs/exp_b/config.yaml
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  GPU-Util / Memory-Usage bars  │  C-a head  C-e tail  [HEAD]  │  v verbose  q quit  -1 once
