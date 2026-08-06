@@ -1,3 +1,14 @@
+# Trusted Publishing to PyPI (OIDC — no long-lived token).
+#
+# One-time setup on https://pypi.org/manage/account/publishing/
+# (pending publisher; creates the project on first upload):
+#   PyPI project name : nvitop-cluster
+#   Owner             : Micuks
+#   Repository        : nvitop-cluster
+#   Workflow name     : publish.yml
+#   Environment name  : pypi
+#
+# GitHub: Settings → Environments → `pypi` (already created).
 name: Publish to PyPI
 
 on:
@@ -5,25 +16,57 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write  # trusted publishing (no long-lived token)
-
 jobs:
-  publish:
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    environment: pypi
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          enable-cache: true
+          persist-credentials: false
 
-      - name: Build
-        run: uv build
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
 
-      - name: Publish
-        # Configure Trusted Publisher on https://pypi.org/manage/account/publishing/
-        #   owner: Micuks  repo: nvitop-cluster  workflow: publish.yml  environment: pypi
+      - name: Build sdist + wheel
+        run: uv build --no-sources
+
+      - name: Smoke import (wheel)
+        run: |
+          uv run --isolated --no-project --with dist/*.whl \
+            python -c "import nvitop_cluster; from nvitop_cluster.nvitop_cluster import main; print(nvitop_cluster.__version__)"
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nvitop-cluster
+    permissions:
+      id-token: write  # mandatory for Trusted Publishing
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
         run: uv publish
