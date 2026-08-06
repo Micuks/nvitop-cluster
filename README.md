@@ -29,16 +29,15 @@ Zero third-party Python deps (stdlib only). Needs **Python ≥ 3.9**, **`nvidia-
 ### pip / uv (recommended)
 
 ```bash
-# one-liner from GitHub (works now, no PyPI account needed on your side)
-pip install "git+https://github.com/Micuks/nvitop-cluster.git"
-# or
-uv pip install "git+https://github.com/Micuks/nvitop-cluster.git"
-
-# one-shot (no persistent install)
-uvx --from "git+https://github.com/Micuks/nvitop-cluster.git" nvitop-cluster
-
-# PyPI (after a release is published)
 pip install nvitop-cluster
+# or
+uv pip install nvitop-cluster
+
+# one-shot without installing into the env
+uvx nvitop-cluster
+
+# from GitHub (latest main)
+pip install "git+https://github.com/Micuks/nvitop-cluster.git"
 ```
 
 Then:
