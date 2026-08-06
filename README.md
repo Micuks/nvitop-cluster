@@ -6,7 +6,7 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 
 ## Screenshot
 
-![nvitop-cluster sample](docs/assets/nvitop-cluster-sample.png)
+![nvitop-cluster sample](https://raw.githubusercontent.com/Micuks/nvitop-cluster/main/docs/assets/nvitop-cluster-sample.png)
 
 *Sample from a 2-node × 8-GPU job (`/etc/mpi/hostfile`). Bars = GPU util (left) / memory (right). Second line per GPU is the process command (Ctrl-A / Ctrl-E switch head vs tail when truncated).*
 

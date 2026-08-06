@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nvitop-cluster"
-version = "0.1.0"
+version = "0.1.1"
 description = "Multi-node GPU monitor from MPI hostfile (nvitop-style bars + processes)"
 readme = "README.md"
 requires-python = ">=3.9"
