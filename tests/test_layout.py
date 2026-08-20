@@ -84,6 +84,25 @@ class LayoutTests(unittest.TestCase):
         self.assertNotIn("10.48.40.94", text)
         self.assertLessEqual(max(map(len, text.splitlines())), 215)
 
+    def test_wide_terminal_uses_three_columns_and_full_width(self):
+        text = render_dashboard(
+            fake_results(),
+            color_on=False,
+            show_procs=True,
+            cmd_width=0,
+            cols=319,
+            rows=77,
+            verbose=False,
+            cmd_align="left",
+            layout="auto",
+            selected_host=0,
+            attention_only=False,
+        )
+        lines = text.splitlines()
+        self.assertEqual(lines[1].count("╭─"), 3)
+        self.assertEqual(max(map(len, lines)), 319)
+        self.assertIn("10.48.40.97", text)
+
     def test_attention_layout_reports_all_healthy(self):
         text = render_dashboard(
             fake_results(),

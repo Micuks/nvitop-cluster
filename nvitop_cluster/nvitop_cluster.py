@@ -624,7 +624,9 @@ def _overview_geometry(
     cols: int,
     rows: int,
 ) -> Tuple[int, int, int, int]:
-    columns = 2 if cols >= 140 else 1
+    # Keep cards readable while using high-resolution terminals.  A 215-column
+    # pane gets two cards, ~300 gets three, and ~400 gets four.
+    columns = min(max(1, len(entries)), max(1, min(4, cols // 92)))
     max_gpus = max(
         (len((payload or {}).get("gpus") or []) for _, _, payload, _ in entries),
         default=1,
@@ -739,7 +741,7 @@ def render_overview(
     attention_only: bool = False,
 ) -> str:
     """Render an all-host dashboard that adapts to terminal width and height."""
-    width = min(cols, 240)
+    width = cols
     entries = _overview_entries(results, attention_only)
     total_gpus, total_procs, avg_util, avg_mem = _cluster_stats(results)
     attention_tag = "  ATTENTION" if attention_only else ""
@@ -772,8 +774,8 @@ def render_overview(
     page = selected_pos // page_size
     page_count = max(1, (len(entries) + page_size - 1) // page_size)
     visible = entries[page * page_size : (page + 1) * page_size]
-    gap = "   " if columns == 2 else ""
-    block_width = width if columns == 1 else (width - len(gap)) // 2
+    gap = "   " if columns > 1 else ""
+    block_width = width if columns == 1 else (width - len(gap) * (columns - 1)) // columns
 
     for offset in range(0, len(visible), columns):
         blocks = [
@@ -788,7 +790,7 @@ def render_overview(
             )
             for entry in visible[offset : offset + columns]
         ]
-        if len(blocks) == 1 and columns == 2:
+        while len(blocks) < columns:
             blocks.append([" " * block_width] * block_height)
         for row in range(block_height):
             lines.append(gap.join(block[row] for block in blocks))
