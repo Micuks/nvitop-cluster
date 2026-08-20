@@ -1,7 +1,8 @@
-import unittest
 import re
+import unittest
 
 from nvitop_cluster.nvitop_cluster import (
+    _format_running_time,
     _history_chart,
     _history_key,
     _update_history,
@@ -35,6 +36,7 @@ def fake_results(hosts=8, gpus_per_host=8):
                         "/long/env/bin/python app/video_temporal/launch.py "
                         "--fname /very/long/run/name/that/must/not/wrap"
                     ),
+                    "elapsed": 90061 + host_index,
                     "resolved": True,
                 }
             )
@@ -46,6 +48,13 @@ def fake_results(hosts=8, gpus_per_host=8):
 
 
 class LayoutTests(unittest.TestCase):
+    def test_running_time_matches_nvitop_format(self):
+        self.assertEqual(_format_running_time(5), "0:05")
+        self.assertEqual(_format_running_time(65), "1:05")
+        self.assertEqual(_format_running_time(90061), "25:01:01")
+        self.assertEqual(_format_running_time(604800), "7.0 days")
+        self.assertEqual(_format_running_time(None), "N/A")
+
     def test_auto_layout_fits_eight_by_eight_in_215_by_58(self):
         text = render_dashboard(
             fake_results(),
@@ -61,11 +70,12 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
         )
         lines = text.splitlines()
-        self.assertLessEqual(len(lines), 58)
+        self.assertEqual(len(lines), 58)
         self.assertLessEqual(max(map(len, lines)), 215)
         self.assertIn("10.48.40.90", text)
         self.assertIn("10.48.40.97", text)
         self.assertIn("CMD ×8", text)
+        self.assertIn("TIME 25:01:01", text)
         self.assertIn("UTIL", text)
         self.assertIn("VRAM", text)
         self.assertNotIn("#100000", text)
@@ -89,6 +99,8 @@ class LayoutTests(unittest.TestCase):
         )
         self.assertIn("10.48.40.93", text)
         self.assertIn("100030", text)
+        self.assertIn("TIME", text)
+        self.assertIn("25:01:04", text)
         self.assertNotIn("10.48.40.92", text)
         self.assertNotIn("10.48.40.94", text)
         self.assertLessEqual(max(map(len, text.splitlines())), 215)
@@ -110,8 +122,9 @@ class LayoutTests(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(lines[1].count("╭─"), 2)
         self.assertEqual(max(map(len, lines)), 319)
+        self.assertEqual(len(lines), 77)
         self.assertIn("10.48.40.97", text)
-        self.assertIn("OVERVIEW/FULL", text)
+        self.assertIn("OVERVIEW/RICH", text)
         self.assertEqual(text.count("UTIL HISTORY"), 8)
         self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertNotIn("trend", text)
@@ -181,7 +194,7 @@ class LayoutTests(unittest.TestCase):
         self.assertNotIn("page 1/", text)
         self.assertEqual(text.count("UTIL RANGE"), 16)
         self.assertEqual(text.count("THERMAL"), 16)
-        self.assertLessEqual(len(lines), 70)
+        self.assertEqual(len(lines), 70)
         self.assertEqual(max(map(len, lines)), 319)
 
     def test_very_wide_terminal_uses_full_host_history(self):
@@ -203,11 +216,11 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
             history=history,
         )
-        self.assertIn("OVERVIEW/FULL", text)
+        self.assertIn("OVERVIEW/RICH", text)
         self.assertEqual(text.count("UTIL HISTORY"), 8)
         self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertIn("████", text)
-        self.assertLessEqual(len(text.splitlines()), 77)
+        self.assertEqual(len(text.splitlines()), 77)
         self.assertEqual(max(map(len, text.splitlines())), 400)
 
     def test_history_is_bounded_and_keyed_by_host_and_gpu(self):

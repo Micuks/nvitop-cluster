@@ -17,7 +17,7 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 - **Wide dual bars**: GPU-Util and Memory-Usage (width scales with terminal)
 - **Adaptive density**: compact per-GPU tables expand into host-average UTIL/VRAM line charts when terminal area leaves room
 - **Uniform grid**: common 8-host and 16-host jobs use equal 2-column×4-row / 4×4 cards; partial final rows stay equal and centered
-- **Command deduplication**: repeated rank commands collapse to one `CMD ×N` row per host
+- **Command + runtime**: repeated rank commands collapse to one `CMD ×N` row per host with nvitop-style `TIME`; detail view shows each PID's runtime
 - **Process names**: optional host-PID → container-PID remap for Kubernetes/container jobs
 - **Watch mode by default** (2s); keys:
   - **Ctrl-A** / `a` — CMD head (like nvitop)
@@ -147,7 +147,8 @@ If all hosts do not fit at COMPACT density, the view paginates. History is
 retained in a bounded in-memory window and survives terminal resizes during the
 same monitor session. A partial final row keeps the same card dimensions as
 preceding rows and is centered instead of stretching a few cards. Identical
-process commands remain collapsed to `CMD ×N`.
+process commands remain collapsed to `CMD ×N`; their footer shows the longest
+runtime in that command group, while detail view reports `TIME` per PID.
 
 Press `Enter` for the selected host's full bars and command lines, then `g` to
 return. Press `x` to temporarily show only GPUs that need attention.

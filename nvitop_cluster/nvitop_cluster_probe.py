@@ -11,6 +11,7 @@ import os
 import pwd
 import subprocess
 import sys
+from typing import Optional
 
 TOOL = os.environ.get(
     "NVITOP_CLUSTER_HOME",
@@ -105,6 +106,34 @@ def _cmdline(pid: int) -> str:
         return "?"
 
 
+def _elapsed_from_proc_stat(stat: str, uptime: float, clock_ticks: int) -> float:
+    """Return process age from Linux /proc data.
+
+    ``comm`` (field 2) may contain spaces and closing parentheses, so split at
+    the final ``)`` before indexing field 22 (starttime).
+    """
+    end_of_comm = stat.rfind(")")
+    if end_of_comm < 0:
+        raise ValueError("invalid /proc stat: missing comm terminator")
+    fields_after_comm = stat[end_of_comm + 1 :].split()
+    if len(fields_after_comm) <= 19:
+        raise ValueError("invalid /proc stat: missing starttime")
+    start_ticks = int(fields_after_comm[19])
+    return max(0.0, float(uptime) - start_ticks / int(clock_ticks))
+
+
+def _process_elapsed_seconds(pid: int) -> Optional[float]:
+    """Read a process' monotonic running time from Linux procfs."""
+    try:
+        with open(f"/proc/{pid}/stat") as stat_file:
+            stat = stat_file.read()
+        with open("/proc/uptime") as uptime_file:
+            uptime = float(uptime_file.read().split()[0])
+        return _elapsed_from_proc_stat(stat, uptime, os.sysconf("SC_CLK_TCK"))
+    except Exception:
+        return None
+
+
 def _proc_rows(uuid_to_index: dict) -> list:
     # Prefer pid-map resolution (host NVML pid -> container pid)
     pm = _import_pid_map()
@@ -145,11 +174,13 @@ def _proc_rows(uuid_to_index: dict) -> list:
         if local_pid and os.path.exists(f"/proc/{local_pid}"):
             cmd = _cmdline(local_pid)
             user = _username(local_pid)
+            elapsed = _process_elapsed_seconds(local_pid)
             shown_pid = local_pid
             ok = True
         else:
             cmd = "[No Such Process]"
             user = "?"
+            elapsed = None
             shown_pid = host_pid
             ok = False
 
@@ -162,6 +193,7 @@ def _proc_rows(uuid_to_index: dict) -> list:
                 "mem_mib": mem_mib,
                 "user": user,
                 "cmdline": cmd,
+                "elapsed": elapsed,
                 "resolved": ok,
             }
         )

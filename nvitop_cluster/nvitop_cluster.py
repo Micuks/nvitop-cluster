@@ -303,6 +303,22 @@ def fit_cmd(cmd: str, width: int, align: str = "left") -> str:
     return cmd[: width - 1] + "…"
 
 
+def _format_running_time(seconds: object) -> str:
+    """Format elapsed seconds with the same thresholds as nvitop 1.6.x."""
+    try:
+        total = max(0, int(float(seconds)))
+    except (TypeError, ValueError, OverflowError):
+        return "N/A"
+    days, day_seconds = divmod(total, 86400)
+    if days >= 4:
+        return f"{days + day_seconds / 86400:.1f} days"
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:d}:{secs:02d}"
+
+
 def collect(hosts: Sequence[str]) -> List[Tuple[str, Optional[dict], Optional[str]]]:
     local_ips = _local_ips()
 
@@ -407,12 +423,20 @@ def render(
     else:
         cmd_budget = max(20, cols - cmd_prefix_w)
 
+    elapsed_values = [
+        _format_running_time(proc.get("elapsed"))
+        for _, payload, err in results
+        if not err and payload
+        for proc in payload.get("procs") or []
+    ]
+    time_w = max(4, max((len(value) for value in elapsed_values), default=4))
+
     # header for metric row
     u_label = f"{'GPU-Util':^{bar_w + 7}}"
     m_label = f"{'Memory-Usage':^{bar_w + 10}}"
     lines.append(
         f"{'HOST':<{host_w}} {'GPU':>3} {'TYPE':<5} "
-        f"{u_label}  {m_label}  {'TEMP':>5} {'PWR':>6}  {'PID':>7}"
+        f"{u_label}  {m_label}  {'TEMP':>5} {'PWR':>6}  {'TIME':>{time_w}} {'PID':>7}"
     )
     lines.append(sep)
 
@@ -474,7 +498,7 @@ def render(
                 continue
 
             if not plist:
-                lines.append(metric + f"  {'-':>7}")
+                lines.append(metric + f"  {'-':>{time_w}} {'-':>7}")
                 lines.append(
                     cmd_indent + color("(no compute process)", "90", color_on)
                 )
@@ -484,20 +508,22 @@ def render(
                 raw_cmd = p.get("cmdline") or "?"
                 pid = p["pid"]
                 user = (p.get("user") or "?")[:8]
+                elapsed_s = _format_running_time(p.get("elapsed"))
+                elapsed_s = color(f"{elapsed_s:>{time_w}}", "90", color_on)
                 if p.get("resolved"):
                     pid_s = color(f"{pid:>7}", "96", color_on)
                 else:
                     pid_s = color(f"{pid:>7}", "91", color_on)
 
                 if j == 0:
-                    lines.append(metric + f"  {pid_s}")
+                    lines.append(metric + f"  {elapsed_s} {pid_s}")
                 else:
                     # extra process on same GPU
                     lines.append(
                         f"{'':<{host_w}} {'↳':>3} {'':<5} "
                         f"{'':<{bar_w}} {'':>6}  "
                         f"{'':<{bar_w}} {'':>5} {'':<9}  "
-                        f"{'':>4} {'':>5}  {pid_s}"
+                        f"{'':>4} {'':>5}  {elapsed_s} {pid_s}"
                     )
 
                 if verbose:
@@ -642,7 +668,9 @@ def _overview_geometry(
     choices = []
     for candidate in range(1, max_columns + 1):
         host_rows = max(1, (len(entries) + candidate - 1) // candidate)
-        usable = rows - 4 - (host_rows - 1)
+        # title + separator + footer are the only fixed rows.  Any division
+        # remainder is distributed by render_overview across host rows.
+        usable = rows - 3 - (host_rows - 1)
         per_block = usable // host_rows
         gap_width = 3 if candidate > 1 else 0
         block_width = (cols - gap_width * (candidate - 1)) // candidate
@@ -652,7 +680,7 @@ def _overview_geometry(
         if per_block < compact_height:
             continue
         surplus = per_block - compact_height
-        graph_lines = min(9, surplus) if surplus >= 5 else 0
+        graph_lines = min(7, surplus) if surplus >= 5 else 0
         exact_grid = int(len(entries) % candidate == 0)
         graph_quality = -abs(graph_lines - 7) if graph_lines else -7
         choices.append(
@@ -683,7 +711,7 @@ def _overview_geometry(
         gpu_columns = 2 if block_width >= 140 and max_gpus >= 4 else 1
         gpu_rows = (max_gpus + gpu_columns - 1) // gpu_columns
         compact_height = max(4, gpu_rows + 4)
-        block_rows = max(1, (rows - 3) // (compact_height + 1))
+        block_rows = max(1, (rows - 2) // (compact_height + 1))
         page_size = candidate * block_rows
         fallback.append((page_size, block_width, candidate, block_rows, compact_height))
     page_size, _, columns, block_rows, compact_height = max(
@@ -876,9 +904,13 @@ def _host_detail_lines(gpus: Sequence[dict], limit: int, color_on: bool) -> List
     mems = []
     temps = [float(gpu.get("temp") or 0.0) for gpu in gpus]
     powers = [float(gpu.get("power") or 0.0) for gpu in gpus]
+    memory_used = 0.0
+    memory_total = 0.0
     for gpu in gpus:
         total = float(gpu.get("mem_total") or 0.0)
         used = float(gpu.get("mem_used") or 0.0)
+        memory_used += used
+        memory_total += total
         mems.append(used / total * 100.0 if total else 0.0)
     lines = [
         (
@@ -892,6 +924,10 @@ def _host_detail_lines(gpus: Sequence[dict], limit: int, color_on: bool) -> List
             + f"   avg {sum(mems) / len(mems):>3.0f}%   max {max(mems):>3.0f}%"
         ),
         f" THERMAL  {min(temps):.0f}–{max(temps):.0f}C   POWER  {sum(powers) / 1000.0:.1f}kW total",
+        (
+            f" VRAM TOTAL  {memory_used / 1024:.1f}/{memory_total / 1024:.0f}G"
+            f"   GPU BUSY  {sum(value >= 70 for value in utils)}/{len(utils)}"
+        ),
     ]
     return lines[:limit]
 
@@ -900,16 +936,18 @@ def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
     procs = (payload or {}).get("procs") or []
     if not procs:
         return " CMD — no compute process"
-    groups: Dict[str, int] = {}
+    groups: Dict[str, List[dict]] = {}
     users = set()
     for proc in procs:
         cmd = normalize_cmd(proc.get("cmdline") or "?")
-        groups[cmd] = groups.get(cmd, 0) + 1
+        groups.setdefault(cmd, []).append(proc)
         users.add((proc.get("user") or "?")[:8])
-    lead_cmd, _ = sorted(groups.items(), key=lambda item: (-item[1], item[0]))[0]
+    lead_cmd, lead_procs = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))[0]
     user = next(iter(users)) if len(users) == 1 else "mixed"
     group_note = "" if len(groups) == 1 else f"/{len(groups)}cmd"
-    prefix = f" CMD ×{len(procs)}{group_note} {user} "
+    elapsed_values = [proc.get("elapsed") for proc in lead_procs if proc.get("elapsed") is not None]
+    elapsed = _format_running_time(max(elapsed_values)) if elapsed_values else "N/A"
+    prefix = f" CMD ×{len(procs)}{group_note}  TIME {elapsed}  {user} "
     return prefix + _fit_plain(lead_cmd, max(1, width - len(prefix)), align)
 
 
@@ -1014,7 +1052,7 @@ def _overview_block(
         detail_lines = max(0, height - (gpu_rows + 4) - history_lines)
         lines.extend(
             _card_row(detail, width)
-            for detail in _host_detail_lines(gpus, min(3, detail_lines), color_on)
+            for detail in _host_detail_lines(gpus, min(4, detail_lines), color_on)
         )
         lines.extend(
             _card_row(chart_line, width)
@@ -1085,9 +1123,11 @@ def render_overview(
     total_gpus, total_procs, avg_util, avg_mem = _cluster_stats(results)
     attention_tag = "  ATTENTION" if attention_only else ""
     if entries:
-        columns, block_height, _, page_size, history_lines = _overview_geometry(entries, cols, rows)
+        columns, block_height, _block_rows, page_size, history_lines = _overview_geometry(
+            entries, cols, rows
+        )
     else:
-        columns, block_height, page_size, history_lines = 1, 3, 1, 0
+        columns, block_height, _block_rows, page_size, history_lines = 1, 3, 1, 1, 0
     density = "COMPACT" if history_lines == 0 else ("RICH" if history_lines <= 7 else "FULL")
     title = (
         f" nvitop-cluster OVERVIEW/{density}{attention_tag} │ hosts={len(results)}  "
@@ -1118,16 +1158,22 @@ def render_overview(
     page = selected_pos // page_size
     page_count = max(1, (len(entries) + page_size - 1) // page_size)
     visible = entries[page * page_size : (page + 1) * page_size]
+    visible_rows = max(1, (len(visible) + columns - 1) // columns)
+    available_card_height = rows - 3 - (visible_rows - 1)
+    row_height, row_remainder = divmod(available_card_height, visible_rows)
+    row_height = max(block_height, row_height)
+
     card_gap = 3
     block_width = width if columns == 1 else (width - card_gap * (columns - 1)) // columns
-    for offset in range(0, len(visible), columns):
+    for grid_row, offset in enumerate(range(0, len(visible), columns)):
+        current_height = row_height + (1 if grid_row < row_remainder else 0)
         row_entries = visible[offset : offset + columns]
         row_columns = len(row_entries)
         blocks = [
             _overview_block(
                 entry,
                 block_width,
-                block_height,
+                current_height,
                 color_on,
                 show_procs,
                 cmd_align,
@@ -1147,7 +1193,7 @@ def render_overview(
             used = block_width * row_columns + sum(gaps)
             left_margin = max(0, (width - used) // 2)
             right_margin = max(0, width - used - left_margin)
-        for row in range(block_height):
+        for row in range(current_height):
             pieces = [" " * left_margin, blocks[0][row]]
             for index, block in enumerate(blocks[1:]):
                 pieces.extend((" " * gaps[index], block[row]))
@@ -1499,7 +1545,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         if watch is not None:
             sys.stdout.write("\033[H\033[J")
-        print(text)
+            # The dashboard already occupies exactly ``rows`` lines.  A final
+            # print newline would advance to row + 1, scroll away the title,
+            # and leave an apparent blank line at the bottom.
+            sys.stdout.write(text)
+        else:
+            print(text)
         sys.stdout.flush()
 
     if watch is None:
@@ -1521,6 +1572,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         # after key redraw, continue waiting rest of interval
     except KeyboardInterrupt:
         pass
+    sys.stdout.write("\n")
+    sys.stdout.flush()
     return 0
 
 
