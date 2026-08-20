@@ -651,7 +651,10 @@ def _overview_geometry(
         gap_width = 3 if candidate > 1 else 0
         block_width = (cols - gap_width * (candidate - 1)) // candidate
         surplus = per_block - compact_height
-        graph_lines = min(32, surplus) if surplus >= 5 else 0
+        # Nine terminal rows already provide 28 vertical Braille pixels.  More
+        # height rarely reveals more signal, so stop rewarding it and prefer
+        # wider cards / a balanced grid instead.
+        graph_lines = min(9, surplus) if surplus >= 5 else 0
         choices.append((graph_lines, block_width, candidate, host_rows, per_block))
 
     if choices:
@@ -711,6 +714,42 @@ def _update_history(
             history[key].append(sum(values) / len(values))
 
 
+_BRAILLE_BITS = (
+    (0x01, 0x08),
+    (0x02, 0x10),
+    (0x04, 0x20),
+    (0x40, 0x80),
+)
+
+
+def _set_braille_pixel(canvas: List[List[int]], x: int, y: int) -> None:
+    if y < 0 or y >= len(canvas) * 4 or x < 0 or x >= len(canvas[0]) * 2:
+        return
+    canvas[y // 4][x // 2] |= _BRAILLE_BITS[y % 4][x % 2]
+
+
+def _draw_braille_segment(
+    canvas: List[List[int]], x0: int, y0: int, x1: int, y1: int
+) -> None:
+    """Draw a connected segment on a 2x4 subpixel-per-cell Braille canvas."""
+    dx = abs(x1 - x0)
+    sx = 1 if x0 < x1 else -1
+    dy = -abs(y1 - y0)
+    sy = 1 if y0 < y1 else -1
+    error = dx + dy
+    while True:
+        _set_braille_pixel(canvas, x0, y0)
+        if x0 == x1 and y0 == y1:
+            break
+        doubled = 2 * error
+        if doubled >= dy:
+            error += dy
+            x0 += sx
+        if doubled <= dx:
+            error += dx
+            y0 += sy
+
+
 def _history_chart(
     values: Sequence[float],
     width: int,
@@ -720,22 +759,29 @@ def _history_chart(
     code: str,
     color_on: bool,
 ) -> List[str]:
-    """Render a bounded 0–100 line trace, never a filled progress area."""
+    """Render a connected 0–100 trace on a high-resolution Braille canvas."""
     width = max(12, width)
     height = max(5, height)
     plot_height = height - 2  # title + time axis
     plot_width = max(4, width - 4)
-    grid = [[" " for _ in range(plot_width)] for _ in range(plot_height)]
-    recent = list(values)[-plot_width:]
-    offset = plot_width - len(recent)
-    for sample_index, value in enumerate(recent):
-        value = max(0.0, min(100.0, float(value)))
-        row = int(round((100.0 - value) / 100.0 * (plot_height - 1)))
-        grid[row][offset + sample_index] = "•"
+    canvas = [[0 for _ in range(plot_width)] for _ in range(plot_height)]
+    pixel_width = plot_width * 2
+    pixel_height = plot_height * 4
+    recent = [max(0.0, min(100.0, float(value))) for value in list(values)[-pixel_width:]]
+    offset = pixel_width - len(recent)
+    points = [
+        (offset + index, int(round((100.0 - value) / 100.0 * (pixel_height - 1))))
+        for index, value in enumerate(recent)
+    ]
+    if len(points) == 1:
+        _set_braille_pixel(canvas, *points[0])
+    else:
+        for first, second in zip(points, points[1:]):
+            _draw_braille_segment(canvas, first[0], first[1], second[0], second[1])
 
     lines = [color(_fit_plain(f"{title}  now {latest:3.0f}%", width), code, color_on)]
     middle = (plot_height - 1) // 2
-    for row, cells in enumerate(grid):
+    for row, cells in enumerate(canvas):
         if row == 0:
             label = "100"
         elif row == plot_height - 1:
@@ -744,7 +790,11 @@ def _history_chart(
             label = " 50"
         else:
             label = "   "
-        trace = color("".join(cells), code, color_on)
+        trace = color(
+            "".join(chr(0x2800 + bits) if bits else " " for bits in cells),
+            code,
+            color_on,
+        )
         lines.append(f"{label}┤{trace}")
     lines.append("   └" + "─" * max(1, plot_width - 1) + "▶")
     return [_pad_visible(line, width) for line in lines[:height]]

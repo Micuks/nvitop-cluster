@@ -141,7 +141,7 @@ cards, then calculates detail density from the available terminal area per GPU:
 
 - **COMPACT** — one line/GPU with current utilization, memory, temperature, and power
 - **RICH** — adds compact host-average utilization and VRAM time-series charts
-- **FULL** — expands those charts vertically and balances the host-card grid to use the available screen
+- **FULL** — renders connected Braille traces (2×4 subpixels/cell) and balances the host-card grid without over-growing plots
 
 If all hosts do not fit at COMPACT density, the view paginates. History is
 retained in a bounded in-memory window and survives terminal resizes during the

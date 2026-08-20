@@ -1,6 +1,11 @@
 import unittest
 
-from nvitop_cluster.nvitop_cluster import _history_key, _update_history, render_dashboard
+from nvitop_cluster.nvitop_cluster import (
+    _history_chart,
+    _history_key,
+    _update_history,
+    render_dashboard,
+)
 
 
 def fake_results(hosts=8, gpus_per_host=8):
@@ -87,7 +92,7 @@ class LayoutTests(unittest.TestCase):
         self.assertNotIn("10.48.40.94", text)
         self.assertLessEqual(max(map(len, text.splitlines())), 215)
 
-    def test_wide_terminal_uses_four_by_two_and_full_width(self):
+    def test_wide_terminal_uses_three_plus_three_plus_two(self):
         text = render_dashboard(
             fake_results(),
             color_on=False,
@@ -102,7 +107,7 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
         )
         lines = text.splitlines()
-        self.assertEqual(lines[1].count("╭─"), 4)
+        self.assertEqual(lines[1].count("╭─"), 3)
         self.assertEqual(max(map(len, lines)), 319)
         self.assertIn("10.48.40.97", text)
         self.assertIn("OVERVIEW/FULL", text)
@@ -110,7 +115,25 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertNotIn("trend", text)
         self.assertIn("100┤", text)
-        self.assertEqual(lines[1].count("╮"), 4)
+        self.assertEqual(lines[1].count("╮"), 3)
+        last_host_row = next(line for line in lines if "10.48.40.96" in line)
+        self.assertIn("10.48.40.97", last_host_row)
+        self.assertEqual(last_host_row.count("╭─"), 2)
+        self.assertEqual(len(last_host_row), 319)
+
+    def test_history_chart_uses_connected_braille_trace(self):
+        chart = _history_chart(
+            [10, 25, 70, 40, 90, 60],
+            width=32,
+            height=7,
+            title="UTIL HISTORY",
+            latest=60,
+            code="92",
+            color_on=False,
+        )
+        braille = [char for line in chart for char in line if 0x2800 <= ord(char) <= 0x28FF]
+        self.assertTrue(braille)
+        self.assertNotIn("•", "\n".join(chart))
 
     def test_partial_final_row_redistributes_full_width(self):
         text = render_dashboard(
