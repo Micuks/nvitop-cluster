@@ -6,9 +6,9 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 
 ## Screenshot
 
-![nvitop-cluster sample](https://raw.githubusercontent.com/Micuks/nvitop-cluster/main/docs/assets/nvitop-cluster-sample.png)
+![Sanitized nvitop-cluster 8-node overview](docs/assets/nvitop-cluster-overview-sanitized.png)
 
-*Sample from a 2-node × 8-GPU job (`/etc/mpi/hostfile`). Small jobs use the detailed bar view. Large jobs automatically switch to a compact multi-column overview so every host remains visible.*
+*Sanitized sample from an 8-node × 8-GPU job (`/etc/mpi/hostfile`). Small jobs use the detailed bar view. Large jobs automatically switch to a compact multi-column overview so every host remains visible.*
 
 ## Features
 
