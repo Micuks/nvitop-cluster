@@ -8,17 +8,25 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 
 ![nvitop-cluster sample](https://raw.githubusercontent.com/Micuks/nvitop-cluster/main/docs/assets/nvitop-cluster-sample.png)
 
-*Sample from a 2-node × 8-GPU job (`/etc/mpi/hostfile`). Bars = GPU util (left) / memory (right). Second line per GPU is the process command (Ctrl-A / Ctrl-E switch head vs tail when truncated).*
+*Sample from a 2-node × 8-GPU job (`/etc/mpi/hostfile`). Small jobs use the detailed bar view. Large jobs automatically switch to a compact multi-column overview so every host remains visible.*
 
 ## Features
 
 - **Hostfile discovery**: `/etc/mpi/hostfile`, `/etc/mpi/mpi-hostfile`, or `-f PATH`
 - **Local + remote**: local probe without SSH; peers via `ssh` (optional KML-style `ssh_config`)
 - **Wide dual bars**: GPU-Util and Memory-Usage (width scales with terminal)
+- **Adaptive overview**: 8×8 and larger jobs use side-by-side host cards sized to the terminal
+- **Command deduplication**: repeated rank commands collapse to one `CMD ×N` row per host
 - **Process names**: optional host-PID → container-PID remap for Kubernetes/container jobs
 - **Watch mode by default** (2s); keys:
   - **Ctrl-A** / `a` — CMD head (like nvitop)
   - **Ctrl-E** / `e` — CMD tail
+  - **j** / **k** — select next / previous host
+  - **Enter** / **d** — detail view for the selected host
+  - **g** — return to the all-host overview
+  - **p** — show / hide process information
+  - **x** — attention-only view (stalled, hot, full-memory, missing/unresolved process)
+  - **[** / **]** — previous / next host page on smaller terminals
   - **v** — verbose full cmdline
   - **q** — quit
 
@@ -67,6 +75,24 @@ pip install 'nvitop-cluster[nvitop]'
 # then: nvitop_cluster/nvitop --cluster
 ```
 
+### KML shared-path activation
+
+When this repository is deployed at
+`/share_l3/wuqingliu/tools/nvitop-container`, sourcing the shared tmux config
+activates the PID mapper and installs stable `nvitop` / `nvitop-cluster`
+launchers:
+
+```bash
+tmux source-file /mmu_mllm_hdd_3/wuqingliu/.tmux.conf
+```
+
+The accompanying config can bind `Prefix + N` to open the adaptive dashboard:
+
+```tmux
+bind-key N new-window -n nvitop-cluster -c "#{pane_current_path}" \
+  "/share_l3/wuqingliu/bin/nvitop-cluster"
+```
+
 ## Usage
 
 ```bash
@@ -75,6 +101,10 @@ nvitop-cluster
 
 # once
 nvitop-cluster -1
+
+# force a particular layout (default: auto)
+nvitop-cluster --layout overview
+nvitop-cluster --layout detail
 
 # custom hostfile / SSH config
 nvitop-cluster -f /path/to/hostfile
@@ -101,6 +131,17 @@ python3 -m nvitop_cluster  # same as nvitop-cluster
 | `NVITOP_CLUSTER_SSH_CONFIG` | SSH config for peers (default: `/etc/kml/ssh/ssh_config` if present) |
 | `NVITOP_HOSTFILE` | Extra hostfile path candidate |
 | `NVITOP_CLUSTER=1` | Force cluster mode when using the `nvitop` wrapper |
+
+### Adaptive layouts
+
+`--layout auto` estimates the detailed view's physical height using the current
+terminal dimensions. If it would overflow, nvitop-cluster switches to compact
+host cards. On a 215×58 terminal, an 8-node × 8-GPU job fits in 46 rows with two
+hosts side by side. Each GPU keeps utilization, memory, temperature, power,
+process count, and PID; identical process commands are shown once as `CMD ×8`.
+
+Press `Enter` for the selected host's full bars and command lines, then `g` to
+return. Press `x` to temporarily show only GPUs that need attention.
 
 ## Container / Kubernetes note
 

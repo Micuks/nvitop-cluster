@@ -205,11 +205,16 @@ def short_gpu_name(name: str) -> str:
     return (n.split()[0] if n else "?")[:5]
 
 
-def term_cols(fallback: int = 200) -> int:
+def term_size(cols_fallback: int = 200, rows_fallback: int = 40) -> Tuple[int, int]:
     try:
-        return max(60, shutil.get_terminal_size((fallback, 40)).columns)
+        size = shutil.get_terminal_size((cols_fallback, rows_fallback))
+        return max(60, size.columns), max(12, size.lines)
     except Exception:
-        return fallback
+        return cols_fallback, rows_fallback
+
+
+def term_cols(fallback: int = 200) -> int:
+    return term_size(fallback, 40)[0]
 
 
 def wrap_cmd(cmd: str, width: int) -> List[str]:
@@ -352,7 +357,6 @@ def render(
 
     width = min(cols, 240)
     sep = "─" * width
-    thin = "·" * width
 
     lines.append(
         color(
@@ -375,12 +379,15 @@ def render(
     host_w = 16
     # CMD on second line: indent + almost full width
     cmd_indent = "    │ "
+    # Reserve the user column too.  The previous calculation only subtracted
+    # cmd_indent, so long commands wrapped by a few cells on real terminals.
+    cmd_prefix_w = len(cmd_indent) + 8 + 2
     if cmd_width < 0:
         cmd_budget = 10**9
     elif cmd_width > 0:
         cmd_budget = cmd_width
     else:
-        cmd_budget = max(40, cols - len(cmd_indent))
+        cmd_budget = max(20, cols - cmd_prefix_w)
 
     # header for metric row
     u_label = f"{'GPU-Util':^{bar_w + 7}}"
@@ -476,7 +483,7 @@ def render(
                     )
 
                 if verbose:
-                    for chunk in wrap_cmd(normalize_cmd(raw_cmd), max(40, cols - len(cmd_indent))):
+                    for chunk in wrap_cmd(normalize_cmd(raw_cmd), max(20, cols - len(cmd_indent))):
                         piece = chunk if p.get("resolved") else color(chunk, "91", color_on)
                         lines.append(cmd_indent + piece)
                 else:
@@ -491,9 +498,353 @@ def render(
     lines.append(
         color(" GPU-Util / Memory-Usage bars  │  ", "90", color_on)
         + color(f"C-a head  C-e tail  [{align_tag}]", "96", color_on)
-        + color("  │  v verbose  q quit  -1 once", "90", color_on)
+        + color("  │  g overview  j/k host  p procs  v verbose  q quit", "90", color_on)
     )
     return "\n".join(lines)
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _visible_len(text: str) -> int:
+    return len(_ANSI_RE.sub("", text))
+
+
+def _pad_visible(text: str, width: int) -> str:
+    if _visible_len(text) > width:
+        # Narrow fallback: preserve cell correctness even if it means dropping
+        # inline colors from this one clipped row.
+        text = _fit_plain(_ANSI_RE.sub("", text), width)
+    return text + " " * max(0, width - _visible_len(text))
+
+
+def _fit_plain(text: str, width: int, align: str = "left") -> str:
+    text = " ".join((text or "?").split())
+    if len(text) <= width:
+        return text
+    if width <= 1:
+        return text[:width]
+    if align == "right":
+        return "…" + text[-(width - 1) :]
+    return text[: width - 1] + "…"
+
+
+def _by_gpu(payload: Optional[dict]) -> Dict[int, List[dict]]:
+    grouped: Dict[int, List[dict]] = {}
+    for proc in (payload or {}).get("procs") or []:
+        grouped.setdefault(int(proc.get("gpu_index", -1)), []).append(proc)
+    return grouped
+
+
+def _attention_reasons(gpu: dict, procs: Sequence[dict]) -> List[str]:
+    """Return compact reasons why a GPU deserves operator attention."""
+    reasons: List[str] = []
+    total = float(gpu.get("mem_total") or 0.0)
+    used = float(gpu.get("mem_used") or 0.0)
+    mem_pct = used / total * 100.0 if total else 0.0
+    util = float(gpu.get("util") or 0.0)
+    temp = float(gpu.get("temp") or 0.0)
+    if temp >= 80:
+        reasons.append("hot")
+    if mem_pct >= 95:
+        reasons.append("mem")
+    if procs and mem_pct >= 10 and util < 5:
+        reasons.append("idle")
+    if not procs and mem_pct >= 5:
+        reasons.append("no-proc")
+    if any(not p.get("resolved", False) for p in procs):
+        reasons.append("pid")
+    return reasons
+
+
+def _cluster_stats(
+    results: Sequence[Tuple[str, Optional[dict], Optional[str]]],
+) -> Tuple[int, int, float, float]:
+    total_gpus = 0
+    total_procs = 0
+    util_sum = 0.0
+    mem_sum = 0.0
+    for _, payload, err in results:
+        if err or not payload:
+            continue
+        gpus = payload.get("gpus") or []
+        total_gpus += len(gpus)
+        total_procs += len(payload.get("procs") or [])
+        for gpu in gpus:
+            util_sum += float(gpu.get("util") or 0.0)
+            total = float(gpu.get("mem_total") or 0.0)
+            if total:
+                mem_sum += float(gpu.get("mem_used") or 0.0) / total * 100.0
+    avg_util = util_sum / total_gpus if total_gpus else 0.0
+    avg_mem = mem_sum / total_gpus if total_gpus else 0.0
+    return total_gpus, total_procs, avg_util, avg_mem
+
+
+def _overview_entries(
+    results: Sequence[Tuple[str, Optional[dict], Optional[str]]],
+    attention_only: bool,
+) -> List[Tuple[int, str, Optional[dict], Optional[str]]]:
+    entries: List[Tuple[int, str, Optional[dict], Optional[str]]] = []
+    for index, (label, payload, err) in enumerate(results):
+        if not attention_only or err or not payload:
+            entries.append((index, label, payload, err))
+            continue
+        grouped = _by_gpu(payload)
+        flagged = [
+            gpu
+            for gpu in payload.get("gpus") or []
+            if _attention_reasons(gpu, grouped.get(int(gpu.get("index", -1)), []))
+        ]
+        if flagged:
+            filtered = dict(payload)
+            filtered["gpus"] = flagged
+            entries.append((index, label, filtered, err))
+    return entries
+
+
+def _overview_geometry(
+    entries: Sequence[Tuple[int, str, Optional[dict], Optional[str]]],
+    cols: int,
+    rows: int,
+) -> Tuple[int, int, int, int]:
+    columns = 2 if cols >= 140 else 1
+    max_gpus = max(
+        (len((payload or {}).get("gpus") or []) for _, _, payload, _ in entries),
+        default=1,
+    )
+    block_height = max(3, max_gpus + 2)  # host header + GPUs + command summary
+    available = max(block_height, rows - 4)  # title, separator, footer, safety
+    block_rows = max(1, (available + 1) // (block_height + 1))
+    page_size = max(1, columns * block_rows)
+    return columns, block_height, block_rows, page_size
+
+
+def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
+    procs = (payload or {}).get("procs") or []
+    if not procs:
+        return " CMD — no compute process"
+    groups: Dict[str, int] = {}
+    users = set()
+    for proc in procs:
+        cmd = normalize_cmd(proc.get("cmdline") or "?")
+        groups[cmd] = groups.get(cmd, 0) + 1
+        users.add((proc.get("user") or "?")[:8])
+    lead_cmd, _ = sorted(groups.items(), key=lambda item: (-item[1], item[0]))[0]
+    user = next(iter(users)) if len(users) == 1 else "mixed"
+    group_note = "" if len(groups) == 1 else f"/{len(groups)}cmd"
+    prefix = f" CMD ×{len(procs)}{group_note} {user} "
+    return prefix + _fit_plain(lead_cmd, max(1, width - len(prefix)), align)
+
+
+def _overview_block(
+    entry: Tuple[int, str, Optional[dict], Optional[str]],
+    width: int,
+    height: int,
+    color_on: bool,
+    show_procs: bool,
+    cmd_align: str,
+    selected_host: int,
+) -> List[str]:
+    index, label, payload, err = entry
+    local = label.endswith(" (local)")
+    host = label.replace(" (local)", "")
+    marker = "▸" if index == selected_host else " "
+    gpus = (payload or {}).get("gpus") or []
+    grouped = _by_gpu(payload)
+    if gpus:
+        avg_util = sum(float(g.get("util") or 0.0) for g in gpus) / len(gpus)
+        avg_mem = sum(
+            float(g.get("mem_used") or 0.0) / float(g.get("mem_total") or 1.0) * 100.0
+            for g in gpus
+        ) / len(gpus)
+        stats = f"avg U{avg_util:.0f}% M{avg_mem:.0f}%"
+    else:
+        stats = "no GPUs"
+    tag = "local" if local else "remote"
+    header_plain = _fit_plain(f"{marker} {host} {tag}  {stats}", width)
+    header_code = "1;30;46" if index == selected_host else "36"
+    lines = [color(header_plain, header_code, color_on)]
+
+    if err:
+        lines.append(color(_fit_plain(f" ERROR {err}", width), "91", color_on))
+    elif not payload:
+        lines.append(color(" (no data)", "91", color_on))
+    elif not gpus:
+        lines.append(" (no GPUs)")
+    else:
+        for gpu in gpus:
+            gi = int(gpu.get("index", -1))
+            plist = grouped.get(gi) or []
+            total = float(gpu.get("mem_total") or 0.0)
+            used = float(gpu.get("mem_used") or 0.0)
+            mem_pct = used / total * 100.0 if total else 0.0
+            util = float(gpu.get("util") or 0.0)
+            temp = float(gpu.get("temp") or 0.0)
+            power = float(gpu.get("power") or 0.0)
+            pid = plist[0].get("pid") if plist else None
+            proc_s = f"P{len(plist)}"
+            if pid is not None:
+                proc_s += f" #{pid}"
+            reason = _attention_reasons(gpu, plist)
+            reason_s = f" !{'+'.join(reason)}" if reason else ""
+            prefix = f" {gi:>2} {short_gpu_name(gpu.get('name', '')):<5} U"
+            row = (
+                prefix
+                + color(f"{util:>3.0f}%", level_code(util), color_on)
+                + " M"
+                + color(f"{mem_pct:>3.0f}%", level_code(mem_pct), color_on)
+                + f" {used/1024:.1f}/{total/1024:.0f}Gi "
+                + color(f"{temp:.0f}C", level_code(min(100.0, max(0.0, (temp - 30) * 2))), color_on)
+                + f" {power:.0f}W {proc_s}{reason_s}"
+            )
+            lines.append(row)
+
+    summary = _command_summary(payload, width, cmd_align) if show_procs else " CMD hidden (p to show)"
+    lines.append(color(summary, "90", color_on))
+    while len(lines) < height:
+        lines.append("")
+    return [_pad_visible(line, width) for line in lines[:height]]
+
+
+def render_overview(
+    results: List[Tuple[str, Optional[dict], Optional[str]]],
+    color_on: bool,
+    show_procs: bool,
+    cols: int,
+    rows: int,
+    cmd_align: str = "left",
+    selected_host: int = 0,
+    attention_only: bool = False,
+) -> str:
+    """Render an all-host dashboard that adapts to terminal width and height."""
+    width = min(cols, 240)
+    entries = _overview_entries(results, attention_only)
+    total_gpus, total_procs, avg_util, avg_mem = _cluster_stats(results)
+    attention_tag = "  ATTENTION" if attention_only else ""
+    title = (
+        f" nvitop-cluster OVERVIEW{attention_tag} │ hosts={len(results)}  gpus={total_gpus}  "
+        f"procs={total_procs}  avg-util={avg_util:.0f}%  avg-mem={avg_mem:.0f}%  "
+        f"{time.strftime('%H:%M:%S')}"
+    )
+    lines = [color(_fit_plain(title, width), "1;37;44", color_on)]
+    if not entries:
+        lines.extend(
+            [
+                "",
+                color(" No GPUs currently require attention.", "92", color_on),
+                "─" * width,
+                color(
+                    _fit_plain(
+                        " x all GPUs  │  g overview  j/k host  Enter detail  p procs  q quit",
+                        width,
+                    ),
+                    "90",
+                    color_on,
+                ),
+            ]
+        )
+        return "\n".join(lines)
+
+    columns, block_height, _, page_size = _overview_geometry(entries, cols, rows)
+    selected_pos = next((i for i, item in enumerate(entries) if item[0] == selected_host), 0)
+    page = selected_pos // page_size
+    page_count = max(1, (len(entries) + page_size - 1) // page_size)
+    visible = entries[page * page_size : (page + 1) * page_size]
+    gap = " │ " if columns == 2 else ""
+    block_width = width if columns == 1 else (width - len(gap)) // 2
+
+    for offset in range(0, len(visible), columns):
+        blocks = [
+            _overview_block(
+                entry,
+                block_width,
+                block_height,
+                color_on,
+                show_procs,
+                cmd_align,
+                selected_host,
+            )
+            for entry in visible[offset : offset + columns]
+        ]
+        if len(blocks) == 1 and columns == 2:
+            blocks.append([" " * block_width] * block_height)
+        for row in range(block_height):
+            lines.append(gap.join(block[row] for block in blocks))
+        if offset + columns < len(visible):
+            lines.append("")
+
+    lines.append("─" * width)
+    page_tag = f"page {page + 1}/{page_count}" if page_count > 1 else "all hosts"
+    lines.append(
+        color(
+            _fit_plain(
+                f" {page_tag}  │  g overview  j/k host  Enter detail  p procs  "
+                "x attention  [/] page  C-a/C-e CMD  q quit",
+                width,
+            ),
+            "90",
+            color_on,
+        )
+    )
+    return "\n".join(lines)
+
+
+def _detail_line_estimate(
+    results: Sequence[Tuple[str, Optional[dict], Optional[str]]], show_procs: bool
+) -> int:
+    lines = 4  # title, table header, separators/footer
+    for _, payload, err in results:
+        lines += 1  # host banner
+        if err or not payload:
+            lines += 1
+            continue
+        grouped = _by_gpu(payload)
+        for gpu in payload.get("gpus") or []:
+            lines += 1
+            if show_procs:
+                lines += max(1, len(grouped.get(int(gpu.get("index", -1)), [])))
+    return lines
+
+
+def render_dashboard(
+    results: List[Tuple[str, Optional[dict], Optional[str]]],
+    color_on: bool,
+    show_procs: bool,
+    cmd_width: int,
+    cols: int,
+    rows: int,
+    verbose: bool,
+    cmd_align: str,
+    layout: str,
+    selected_host: int,
+    attention_only: bool,
+) -> str:
+    effective = layout
+    if effective == "auto":
+        effective = "overview" if _detail_line_estimate(results, show_procs) > rows else "detail"
+    if effective == "overview":
+        return render_overview(
+            results,
+            color_on=color_on,
+            show_procs=show_procs,
+            cols=cols,
+            rows=rows,
+            cmd_align=cmd_align,
+            selected_host=selected_host,
+            attention_only=attention_only,
+        )
+    detail_results = results
+    if layout == "detail" and results:
+        detail_results = [results[selected_host % len(results)]]
+    return render(
+        detail_results,
+        color_on=color_on,
+        show_procs=show_procs,
+        cmd_width=cmd_width,
+        cols=cols,
+        verbose=verbose,
+        cmd_align=cmd_align,
+    )
 
 
 class _CbreakTTY:
@@ -520,7 +871,7 @@ class _CbreakTTY:
 def _read_keys(timeout: float, state: dict) -> bool:
     """Wait up to timeout; handle keys. Returns True if need immediate redraw.
 
-    state keys: cmd_align ('left'|'right'), verbose (bool), quit (bool)
+    State includes layout, selected_host, show_procs, and attention_only.
     """
     if not sys.stdin.isatty():
         time.sleep(timeout)
@@ -554,6 +905,39 @@ def _read_keys(timeout: float, state: dict) -> bool:
             break
         if ch in (b"v", b"V"):
             state["verbose"] = not state.get("verbose", False)
+            redraw = True
+            break
+        if ch in (b"g", b"G", b"\x1b", b"\x7f"):
+            state["layout"] = "overview"
+            redraw = True
+            break
+        if ch in (b"d", b"D", b"\r", b"\n"):
+            state["layout"] = "detail"
+            redraw = True
+            break
+        if ch in (b"j", b"J"):
+            state["host_move"] = 1
+            redraw = True
+            break
+        if ch in (b"k", b"K"):
+            state["host_move"] = -1
+            redraw = True
+            break
+        if ch in (b"p", b"P"):
+            state["show_procs"] = not state.get("show_procs", True)
+            redraw = True
+            break
+        if ch in (b"x", b"X"):
+            state["attention_only"] = not state.get("attention_only", False)
+            state["layout"] = "overview"
+            redraw = True
+            break
+        if ch == b"]":
+            state["page_move"] = 1
+            redraw = True
+            break
+        if ch == b"[":
+            state["page_move"] = -1
             redraw = True
             break
         if ch == b"a":  # also accept plain a/e without ctrl for convenience
@@ -616,6 +1000,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="left",
         help="initial CMD truncate side: left/head=Ctrl-A, right/tail=Ctrl-E (default left)",
     )
+    ap.add_argument(
+        "--layout",
+        choices=("auto", "overview", "detail"),
+        default="auto",
+        help="layout: auto fits all hosts to terminal height (default)",
+    )
     ap.add_argument("--no-color", action="store_true")
     ap.add_argument("--ascii", action="store_true", help="ASCII bars")
     args = ap.parse_args(argv)
@@ -668,6 +1058,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     state = {
         "cmd_align": align0,
         "verbose": bool(args.verbose),
+        "layout": args.layout,
+        "selected_host": 0,
+        "show_procs": show_procs,
+        "attention_only": False,
+        "host_move": 0,
+        "page_move": 0,
         "quit": False,
     }
     # cache last probe results so C-a/C-e redraw is instant without re-SSH
@@ -676,15 +1072,43 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     def once(force_collect: bool = True):
         if force_collect or cache["res"] is None:
             cache["res"] = collect(hosts)
-        cols = term_cols()
-        text = render(
+        results = cache["res"] or []
+        cols, rows = term_size()
+
+        # Apply navigation against the currently visible host set so attention
+        # mode skips healthy hosts and page keys land on an actual card.
+        entries = _overview_entries(results, state["attention_only"])
+        visible_indices = [entry[0] for entry in entries]
+        if not visible_indices:
+            visible_indices = list(range(len(results)))
+        if visible_indices:
+            current = state["selected_host"]
+            try:
+                pos = visible_indices.index(current)
+            except ValueError:
+                pos = 0
+            move = int(state.pop("host_move", 0) or 0)
+            page_move = int(state.pop("page_move", 0) or 0)
+            if page_move:
+                _, _, _, page_size = _overview_geometry(entries, cols, rows)
+                move += page_move * page_size
+            state["selected_host"] = visible_indices[(pos + move) % len(visible_indices)]
+        else:
+            state["host_move"] = 0
+            state["page_move"] = 0
+
+        text = render_dashboard(
             cache["res"],
             color_on=color_on,
-            show_procs=show_procs,
+            show_procs=state["show_procs"],
             cmd_width=args.cmd_width,
             cols=cols,
+            rows=rows,
             verbose=state["verbose"],
             cmd_align=state["cmd_align"],
+            layout=state["layout"],
+            selected_host=state["selected_host"],
+            attention_only=state["attention_only"],
         )
         if watch is not None:
             sys.stdout.write("\033[H\033[J")
