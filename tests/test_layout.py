@@ -48,6 +48,25 @@ def fake_results(hosts=8, gpus_per_host=8):
 
 
 class LayoutTests(unittest.TestCase):
+    def test_command_footer_uses_high_contrast_hierarchy(self):
+        text = render_dashboard(
+            fake_results(hosts=1),
+            color_on=True,
+            show_procs=True,
+            cmd_width=0,
+            cols=160,
+            rows=30,
+            verbose=False,
+            cmd_align="left",
+            layout="overview",
+            selected_host=0,
+            attention_only=False,
+        )
+        self.assertIn("\x1b[1;93mCMD ×8\x1b[0m", text)
+        self.assertIn("\x1b[1;96mTIME 25:01:01\x1b[0m", text)
+        self.assertIn("\x1b[90mroot\x1b[0m", text)
+        self.assertIn("\x1b[97mapp/video_temporal/launch.py", text)
+
     def test_running_time_matches_nvitop_format(self):
         self.assertEqual(_format_running_time(5), "0:05")
         self.assertEqual(_format_running_time(65), "1:05")

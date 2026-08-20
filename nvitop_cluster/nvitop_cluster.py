@@ -890,10 +890,15 @@ def _card_top(left: str, right: str, width: int, code: str, color_on: bool) -> s
 
 
 def _card_bottom(summary: str, width: int, color_on: bool) -> str:
-    inner_width = max(1, width - 2)
-    summary = "─ " + _fit_plain(summary.strip(), max(1, inner_width - 4)) + " "
-    inside = summary + "─" * max(0, inner_width - len(summary))
-    return color("╰" + inside[:inner_width] + "╯", "90", color_on)
+    summary_width = max(1, width - 6)
+    if _visible_len(summary) > summary_width:
+        summary = _fit_plain(_ANSI_RE.sub("", summary), summary_width)
+    fill = max(1, width - _visible_len(summary) - 5)
+    return (
+        color("╰─ ", "36", color_on)
+        + summary
+        + color(" " + "─" * fill + "╯", "36", color_on)
+    )
 
 
 def _host_detail_lines(gpus: Sequence[dict], limit: int, color_on: bool) -> List[str]:
@@ -932,10 +937,10 @@ def _host_detail_lines(gpus: Sequence[dict], limit: int, color_on: bool) -> List
     return lines[:limit]
 
 
-def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
+def _command_summary(payload: Optional[dict], width: int, align: str, color_on: bool) -> str:
     procs = (payload or {}).get("procs") or []
     if not procs:
-        return " CMD — no compute process"
+        return color("CMD", "1;93", color_on) + color("  — no compute process", "90", color_on)
     groups: Dict[str, List[dict]] = {}
     users = set()
     for proc in procs:
@@ -947,8 +952,19 @@ def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
     group_note = "" if len(groups) == 1 else f"/{len(groups)}cmd"
     elapsed_values = [proc.get("elapsed") for proc in lead_procs if proc.get("elapsed") is not None]
     elapsed = _format_running_time(max(elapsed_values)) if elapsed_values else "N/A"
-    prefix = f" CMD ×{len(procs)}{group_note}  TIME {elapsed}  {user} "
-    return prefix + _fit_plain(lead_cmd, max(1, width - len(prefix)), align)
+    badge = f"CMD ×{len(procs)}{group_note}"
+    runtime = f"TIME {elapsed}"
+    prefix = f"{badge}  {runtime}  {user} "
+    command = _fit_plain(lead_cmd, max(1, width - len(prefix)), align)
+    return (
+        color(badge, "1;93", color_on)
+        + "  "
+        + color(runtime, "1;96", color_on)
+        + "  "
+        + color(user, "90", color_on)
+        + " "
+        + color(command, "97", color_on)
+    )
 
 
 def _gpu_table_cell(
@@ -1099,7 +1115,11 @@ def _overview_block(
                 )
             lines.append(_card_row(table_gap.join(cells), width))
 
-    command = _command_summary(payload, width - 6, cmd_align) if show_procs else "CMD hidden (p to show)"
+    command = (
+        _command_summary(payload, width - 6, cmd_align, color_on)
+        if show_procs
+        else color("CMD hidden (p to show)", "90", color_on)
+    )
     while len(lines) < height - 1:
         lines.append(_card_row("", width))
     lines.append(_card_bottom(command, width, color_on))
