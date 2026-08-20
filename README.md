@@ -16,7 +16,7 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 - **Local + remote**: local probe without SSH; peers via `ssh` (optional KML-style `ssh_config`)
 - **Wide dual bars**: GPU-Util and Memory-Usage (width scales with terminal)
 - **Adaptive density**: compact per-GPU tables expand into host-average UTIL/VRAM line charts when terminal area leaves room
-- **Gap-free grid**: common 8-host and 16-host jobs fill the viewport; partial final rows redistribute the full width
+- **Uniform grid**: common 8-host and 16-host jobs use equal 2-column×4-row / 4×4 cards; partial final rows stay equal and centered
 - **Command deduplication**: repeated rank commands collapse to one `CMD ×N` row per host
 - **Process names**: optional host-PID → container-PID remap for Kubernetes/container jobs
 - **Watch mode by default** (2s); keys:
@@ -141,13 +141,13 @@ cards, then calculates detail density from the available terminal area per GPU:
 
 - **COMPACT** — one line/GPU with current utilization, memory, temperature, and power
 - **RICH** — adds compact host-average utilization and VRAM time-series charts
-- **FULL** — renders connected Braille traces (2×4 subpixels/cell) and balances the host-card grid without over-growing plots
+- **FULL** — renders connected Braille traces (2×4 subpixels/cell) while keeping each plot vertically bounded
 
 If all hosts do not fit at COMPACT density, the view paginates. History is
 retained in a bounded in-memory window and survives terminal resizes during the
-same monitor session. A partial final row stretches its cards evenly across the
-viewport instead of rendering empty placeholder slots. Identical process
-commands remain collapsed to `CMD ×N`.
+same monitor session. A partial final row keeps the same card dimensions as
+preceding rows and is centered instead of stretching a few cards. Identical
+process commands remain collapsed to `CMD ×N`.
 
 Press `Enter` for the selected host's full bars and command lines, then `g` to
 return. Press `x` to temporarily show only GPUs that need attention.

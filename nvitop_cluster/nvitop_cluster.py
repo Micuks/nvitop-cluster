@@ -626,15 +626,13 @@ def _overview_geometry(
     rows: int,
 ) -> Tuple[int, int, int, int, int]:
     # Pick a grid by usable detail, not width alone.  Cards stay readable down
-    # to 72 columns; wide panes may therefore show 8 hosts as 4x2 and 16 hosts
-    # as 4x4 instead of leaving an unused matrix slot.
+    # to 72 columns.  Wide cards can fold 8 GPU rows into two table columns,
+    # allowing common 8-host jobs to use a compact 2-column x 4-row grid.
     max_columns = min(max(1, len(entries)), max(1, min(8, cols // 72)))
     max_gpus = max(
         (len((payload or {}).get("gpus") or []) for _, _, payload, _ in entries),
         default=1,
     )
-    # top border + summary + table header + GPUs + command/bottom border
-    compact_height = max(4, max_gpus + 4)
 
     # If every host fits, choose the grid with the tallest useful chart.  At a
     # tie prefer wider cards.  Graphs need at least five lines to be legible.
@@ -646,20 +644,33 @@ def _overview_geometry(
         host_rows = max(1, (len(entries) + candidate - 1) // candidate)
         usable = rows - 4 - (host_rows - 1)
         per_block = usable // host_rows
-        if per_block < compact_height:
-            continue
         gap_width = 3 if candidate > 1 else 0
         block_width = (cols - gap_width * (candidate - 1)) // candidate
+        gpu_columns = 2 if block_width >= 140 and max_gpus >= 4 else 1
+        gpu_rows = (max_gpus + gpu_columns - 1) // gpu_columns
+        compact_height = max(4, gpu_rows + 4)
+        if per_block < compact_height:
+            continue
         surplus = per_block - compact_height
-        # Nine terminal rows already provide 28 vertical Braille pixels.  More
-        # height rarely reveals more signal, so stop rewarding it and prefer
-        # wider cards / a balanced grid instead.
         graph_lines = min(9, surplus) if surplus >= 5 else 0
-        choices.append((graph_lines, block_width, candidate, host_rows, per_block))
+        exact_grid = int(len(entries) % candidate == 0)
+        graph_quality = -abs(graph_lines - 7) if graph_lines else -7
+        choices.append(
+            (
+                graph_quality,
+                exact_grid,
+                block_width,
+                -candidate,
+                graph_lines,
+                candidate,
+                host_rows,
+                per_block,
+            )
+        )
 
     if choices:
-        history_lines, _, columns, block_rows, block_height = max(
-            choices, key=lambda item: (item[0], item[1])
+        _, _, _, _, history_lines, columns, block_rows, block_height = max(
+            choices, key=lambda item: item[:4]
         )
         page_size = columns * block_rows
         return columns, block_height, block_rows, page_size, history_lines
@@ -667,12 +678,17 @@ def _overview_geometry(
     # Compact pagination fallback when even the full host set cannot fit.
     fallback = []
     for candidate in range(1, max_columns + 1):
-        block_rows = max(1, (rows - 3) // (compact_height + 1))
-        page_size = candidate * block_rows
         gap_width = 3 if candidate > 1 else 0
         block_width = (cols - gap_width * (candidate - 1)) // candidate
-        fallback.append((page_size, block_width, candidate, block_rows))
-    page_size, _, columns, block_rows = max(fallback, key=lambda item: (item[0], item[1]))
+        gpu_columns = 2 if block_width >= 140 and max_gpus >= 4 else 1
+        gpu_rows = (max_gpus + gpu_columns - 1) // gpu_columns
+        compact_height = max(4, gpu_rows + 4)
+        block_rows = max(1, (rows - 3) // (compact_height + 1))
+        page_size = candidate * block_rows
+        fallback.append((page_size, block_width, candidate, block_rows, compact_height))
+    page_size, _, columns, block_rows, compact_height = max(
+        fallback, key=lambda item: (item[0], item[1])
+    )
     return columns, compact_height, block_rows, page_size, 0
 
 
@@ -897,6 +913,44 @@ def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
     return prefix + _fit_plain(lead_cmd, max(1, width - len(prefix)), align)
 
 
+def _gpu_table_cell(
+    gpu: dict,
+    procs: Sequence[dict],
+    width: int,
+    gauge_w: int,
+    color_on: bool,
+) -> str:
+    gi = int(gpu.get("index", -1))
+    total = float(gpu.get("mem_total") or 0.0)
+    used = float(gpu.get("mem_used") or 0.0)
+    mem_pct = used / total * 100.0 if total else 0.0
+    util = float(gpu.get("util") or 0.0)
+    temp = float(gpu.get("temp") or 0.0)
+    power = float(gpu.get("power") or 0.0)
+    reason = _attention_reasons(gpu, procs)
+    reason_s = " " + color(f"⚠ {'+'.join(reason)}", "91", color_on) if reason else ""
+    util_code = util_level_code(util)
+    mem_code = memory_level_code(mem_pct)
+    row = (
+        f" {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  "
+        + bar_color(util, gauge_w, color_on, util_code)
+        + " "
+        + color(f"{util:>3.0f}%", util_code, color_on)
+        + "  "
+        + bar_color(mem_pct, gauge_w, color_on, mem_code)
+        + " "
+        + color(f"{mem_pct:>3.0f}%", mem_code, color_on)
+        + f"  {used/1024:>4.1f}/{total/1024:.0f}G "
+        + color(
+            f"{temp:>3.0f}C",
+            level_code(min(100.0, max(0.0, (temp - 30) * 2))),
+            color_on,
+        )
+        + f" {power:>4.0f}W{reason_s}"
+    )
+    return _pad_visible(row, width)
+
+
 def _overview_block(
     entry: Tuple[int, str, Optional[dict], Optional[str]],
     width: int,
@@ -955,7 +1009,9 @@ def _overview_block(
             + status
         )
         lines.append(_card_row(summary, width))
-        detail_lines = max(0, height - (len(gpus) + 4) - history_lines)
+        gpu_columns = 2 if width >= 140 and len(gpus) >= 4 else 1
+        gpu_rows = (len(gpus) + gpu_columns - 1) // gpu_columns
+        detail_lines = max(0, height - (gpu_rows + 4) - history_lines)
         lines.extend(
             _card_row(detail, width)
             for detail in _host_detail_lines(gpus, min(3, detail_lines), color_on)
@@ -967,46 +1023,43 @@ def _overview_block(
             )
         )
 
-        gauge_w = max(6, min(12, (width - 62) // 2))
+        table_gap = " │ " if gpu_columns > 1 else ""
+        table_inner_width = width - 2 - len(table_gap) * (gpu_columns - 1)
+        cell_width, cell_remainder = divmod(table_inner_width, gpu_columns)
+        cell_widths = [
+            cell_width + (1 if index < cell_remainder else 0)
+            for index in range(gpu_columns)
+        ]
+        gauge_w = max(6, min(12, (min(cell_widths) - 62) // 2))
         metric_width = gauge_w + 5
-        table_header = (
+        header_cell = (
             f"  # TYPE   {'UTIL':<{metric_width}}  {'VRAM':<{metric_width}}  "
             f"{'USED/TOTAL':>10} {'TEMP':>4} {'PWR':>5}"
         )
-        lines.append(_card_row(color(table_header, "2", color_on), width))
-        for gpu in gpus:
-            gi = int(gpu.get("index", -1))
-            plist = grouped.get(gi) or []
-            total = float(gpu.get("mem_total") or 0.0)
-            used = float(gpu.get("mem_used") or 0.0)
-            mem_pct = used / total * 100.0 if total else 0.0
-            util = float(gpu.get("util") or 0.0)
-            temp = float(gpu.get("temp") or 0.0)
-            power = float(gpu.get("power") or 0.0)
-            reason = _attention_reasons(gpu, plist)
-            reason_s = (
-                " " + color(f"⚠ {'+'.join(reason)}", "91", color_on) if reason else ""
-            )
-            util_code = util_level_code(util)
-            mem_code = memory_level_code(mem_pct)
-            row = (
-                f" {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  "
-                + bar_color(util, gauge_w, color_on, util_code)
-                + " "
-                + color(f"{util:>3.0f}%", util_code, color_on)
-                + "  "
-                + bar_color(mem_pct, gauge_w, color_on, mem_code)
-                + " "
-                + color(f"{mem_pct:>3.0f}%", mem_code, color_on)
-                + f"  {used/1024:>4.1f}/{total/1024:.0f}G "
-                + color(
-                    f"{temp:>3.0f}C",
-                    level_code(min(100.0, max(0.0, (temp - 30) * 2))),
-                    color_on,
+        headers = [
+            _pad_visible(color(header_cell, "2", color_on), cell_widths[index])
+            for index in range(gpu_columns)
+        ]
+        lines.append(_card_row(table_gap.join(headers), width))
+        for row_index in range(gpu_rows):
+            cells = []
+            for column in range(gpu_columns):
+                gpu_index = row_index + column * gpu_rows
+                if gpu_index >= len(gpus):
+                    cells.append(" " * cell_widths[column])
+                    continue
+                gpu = gpus[gpu_index]
+                gi = int(gpu.get("index", -1))
+                cells.append(
+                    _gpu_table_cell(
+                        gpu,
+                        grouped.get(gi) or [],
+                        cell_widths[column],
+                        gauge_w,
+                        color_on,
+                    )
                 )
-                + f" {power:>4.0f}W{reason_s}"
-            )
-            lines.append(_card_row(row, width))
+            lines.append(_card_row(table_gap.join(cells), width))
 
     command = _command_summary(payload, width - 6, cmd_align) if show_procs else "CMD hidden (p to show)"
     while len(lines) < height - 1:
@@ -1065,17 +1118,15 @@ def render_overview(
     page = selected_pos // page_size
     page_count = max(1, (len(entries) + page_size - 1) // page_size)
     visible = entries[page * page_size : (page + 1) * page_size]
+    card_gap = 3
+    block_width = width if columns == 1 else (width - card_gap * (columns - 1)) // columns
     for offset in range(0, len(visible), columns):
         row_entries = visible[offset : offset + columns]
         row_columns = len(row_entries)
-        gap = "   " if row_columns > 1 else ""
-        row_width = width - len(gap) * (row_columns - 1)
-        base_width, remainder = divmod(row_width, row_columns)
-        block_widths = [base_width + (1 if index < remainder else 0) for index in range(row_columns)]
         blocks = [
             _overview_block(
                 entry,
-                block_widths[index],
+                block_width,
                 block_height,
                 color_on,
                 show_procs,
@@ -1084,10 +1135,24 @@ def render_overview(
                 history_lines,
                 history,
             )
-            for index, entry in enumerate(row_entries)
+            for entry in row_entries
         ]
+        if row_columns == columns and row_columns > 1:
+            gap_total = width - block_width * row_columns
+            gap_width, gap_remainder = divmod(gap_total, row_columns - 1)
+            gaps = [gap_width + (1 if index < gap_remainder else 0) for index in range(row_columns - 1)]
+            left_margin = right_margin = 0
+        else:
+            gaps = [card_gap] * max(0, row_columns - 1)
+            used = block_width * row_columns + sum(gaps)
+            left_margin = max(0, (width - used) // 2)
+            right_margin = max(0, width - used - left_margin)
         for row in range(block_height):
-            lines.append(gap.join(block[row] for block in blocks))
+            pieces = [" " * left_margin, blocks[0][row]]
+            for index, block in enumerate(blocks[1:]):
+                pieces.extend((" " * gaps[index], block[row]))
+            pieces.append(" " * right_margin)
+            lines.append("".join(pieces))
         if offset + columns < len(visible):
             lines.append("")
 

@@ -1,4 +1,5 @@
 import unittest
+import re
 
 from nvitop_cluster.nvitop_cluster import (
     _history_chart,
@@ -92,7 +93,7 @@ class LayoutTests(unittest.TestCase):
         self.assertNotIn("10.48.40.94", text)
         self.assertLessEqual(max(map(len, text.splitlines())), 215)
 
-    def test_wide_terminal_uses_three_plus_three_plus_two(self):
+    def test_wide_terminal_uses_uniform_two_columns_by_four_rows(self):
         text = render_dashboard(
             fake_results(),
             color_on=False,
@@ -107,7 +108,7 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
         )
         lines = text.splitlines()
-        self.assertEqual(lines[1].count("╭─"), 3)
+        self.assertEqual(lines[1].count("╭─"), 2)
         self.assertEqual(max(map(len, lines)), 319)
         self.assertIn("10.48.40.97", text)
         self.assertIn("OVERVIEW/FULL", text)
@@ -115,11 +116,11 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertNotIn("trend", text)
         self.assertIn("100┤", text)
-        self.assertEqual(lines[1].count("╮"), 3)
-        last_host_row = next(line for line in lines if "10.48.40.96" in line)
-        self.assertIn("10.48.40.97", last_host_row)
-        self.assertEqual(last_host_row.count("╭─"), 2)
-        self.assertEqual(len(last_host_row), 319)
+        self.assertEqual(lines[1].count("╮"), 2)
+        first_history = next(line for line in lines if "UTIL HISTORY" in line)
+        self.assertIn("VRAM HISTORY", first_history)
+        table_header = next(line for line in lines if line.count("# TYPE") >= 2)
+        self.assertGreaterEqual(table_header.count("# TYPE"), 4)
 
     def test_history_chart_uses_connected_braille_trace(self):
         chart = _history_chart(
@@ -135,9 +136,9 @@ class LayoutTests(unittest.TestCase):
         self.assertTrue(braille)
         self.assertNotIn("•", "\n".join(chart))
 
-    def test_partial_final_row_redistributes_full_width(self):
+    def test_partial_final_row_keeps_card_width_and_centers(self):
         text = render_dashboard(
-            fake_results(hosts=10),
+            fake_results(hosts=7),
             color_on=False,
             show_procs=True,
             cmd_width=0,
@@ -150,10 +151,14 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
         )
         lines = text.splitlines()
-        last_host_row = next(line for line in lines if "10.48.40.98" in line)
-        self.assertIn("10.48.40.99", last_host_row)
-        self.assertEqual(last_host_row.count("╭─"), 2)
+        last_host_row = next(line for line in lines if "10.48.40.96" in line)
+        self.assertEqual(last_host_row.count("╭─"), 1)
         self.assertEqual(len(last_host_row), 319)
+        first_host_row = lines[1]
+        first_cards = re.findall(r"╭.*?╮", first_host_row)
+        last_cards = re.findall(r"╭.*?╮", last_host_row)
+        self.assertEqual({len(card) for card in first_cards + last_cards}, {158})
+        self.assertTrue(last_host_row.startswith(" "))
         self.assertEqual(max(map(len, lines)), 319)
 
     def test_sixteen_hosts_fit_as_four_by_four(self):
