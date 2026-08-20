@@ -637,21 +637,28 @@ def _overview_geometry(
     block_rows = max(1, (available + 1) // (compact_height + 1))
     page_size = max(1, columns * block_rows)
 
-    # If every host fits, spend surplus vertical area on per-GPU history.
+    # If every host fits, spend surplus card area on host-level history.  The
+    # threshold uses cells per GPU, so both terminal width and height matter.
     # Design references (principles only; no GPL TUI code is copied):
     # - nvitop auto/full/compact: https://github.com/XuehaiPan/nvitop#monitor-mode
     # - btop resizable history graphs: https://github.com/aristocratos/btop#configurability
-    gpu_lines = 1
+    history_lines = 0
     block_height = compact_height
     if len(entries) <= page_size:
         host_rows = max(1, (len(entries) + columns - 1) // columns)
         usable = max(compact_height, rows - 4 - (host_rows - 1))
         per_block = usable // host_rows
-        gpu_lines = max(1, min(3, (per_block - 2) // max_gpus))
-        block_height = max(3, 2 + max_gpus * gpu_lines)
+        gap_width = 3 if columns > 1 else 0
+        block_width = (cols - gap_width * (columns - 1)) // columns
+        cells_per_gpu = block_width * per_block / max_gpus
+        if cells_per_gpu >= 360:
+            history_lines = 2
+        elif cells_per_gpu >= 220:
+            history_lines = 1
+        block_height = compact_height + history_lines
         block_rows = host_rows
         page_size = columns * block_rows
-    return columns, block_height, block_rows, page_size, gpu_lines
+    return columns, block_height, block_rows, page_size, history_lines
 
 
 _SPARKS = "▁▂▃▄▅▆▇█"
@@ -666,11 +673,13 @@ def _update_history(
     results: Sequence[Tuple[str, Optional[dict], Optional[str]]],
     maxlen: int = 512,
 ) -> None:
-    """Append one probe sample per GPU; retain a bounded resize-friendly window."""
+    """Append per-GPU and host-average samples to bounded history windows."""
     for label, payload, err in results:
         if err or not payload:
             continue
-        for gpu in payload.get("gpus") or []:
+        gpus = payload.get("gpus") or []
+        host_values = {"util": [], "mem": []}
+        for gpu in gpus:
             gi = int(gpu.get("index", -1))
             total = float(gpu.get("mem_total") or 0.0)
             used = float(gpu.get("mem_used") or 0.0)
@@ -679,10 +688,18 @@ def _update_history(
                 "mem": used / total * 100.0 if total else 0.0,
             }
             for metric, value in values.items():
+                host_values[metric].append(value)
                 key = _history_key(label, gi, metric)
                 if key not in history:
                     history[key] = deque(maxlen=maxlen)
                 history[key].append(value)
+        for metric, values in host_values.items():
+            if not values:
+                continue
+            key = _history_key(label, -1, metric)
+            if key not in history:
+                history[key] = deque(maxlen=maxlen)
+            history[key].append(sum(values) / len(values))
 
 
 def _sparkline(values: Sequence[float], width: int) -> str:
@@ -693,38 +710,40 @@ def _sparkline(values: Sequence[float], width: int) -> str:
         value = max(0.0, min(100.0, float(value)))
         index = min(len(_SPARKS) - 1, int(value / 100.0 * len(_SPARKS)))
         chars.append(_SPARKS[index])
-    return "".join(chars).rjust(width)
+    return "".join(chars).rjust(width, "·")
 
 
-def _gpu_history_lines(
+def _host_history_lines(
     history: Optional[dict],
     label: str,
-    gpu_index: int,
     width: int,
-    gpu_lines: int,
-    util: float,
-    mem_pct: float,
+    history_lines: int,
+    avg_util: float,
+    avg_mem: float,
     color_on: bool,
 ) -> List[str]:
-    if gpu_lines <= 1:
+    if history_lines <= 0:
         return []
-    util_values = (history or {}).get(_history_key(label, gpu_index, "util"), (util,))
-    mem_values = (history or {}).get(_history_key(label, gpu_index, "mem"), (mem_pct,))
-    util_code = util_level_code(util)
-    mem_code = memory_level_code(mem_pct)
-    if gpu_lines == 2:
-        prefix = "│      trend  U "
-        graph_width = max(4, (width - len(prefix) - len("  M ")) // 2)
+    util_values = (history or {}).get(_history_key(label, -1, "util"), (avg_util,))
+    mem_values = (history or {}).get(_history_key(label, -1, "mem"), (avg_mem,))
+    util_code = util_level_code(avg_util)
+    mem_code = memory_level_code(avg_mem)
+    if history_lines == 1:
+        prefix = "│ avg history  GPU ["
+        middle = "]  VRAM ["
+        suffix = "]"
+        graph_width = max(4, (width - len(prefix) - len(middle) - len(suffix)) // 2)
         util_graph = color(_sparkline(util_values, graph_width), util_code, color_on)
         mem_graph = color(_sparkline(mem_values, graph_width), mem_code, color_on)
-        return [f"{prefix}{util_graph}  M {mem_graph}"]
+        return [f"{prefix}{util_graph}{middle}{mem_graph}{suffix}"]
 
-    prefix_u = "│      U history "
-    prefix_m = "│      M history "
-    graph_width = max(4, width - max(len(prefix_u), len(prefix_m)))
+    prefix_u = "│ avg GPU history  ["
+    prefix_m = "│ avg VRAM history ["
+    suffix = "]"
+    graph_width = max(4, width - max(len(prefix_u), len(prefix_m)) - len(suffix))
     return [
-        prefix_u + color(_sparkline(util_values, graph_width), util_code, color_on),
-        prefix_m + color(_sparkline(mem_values, graph_width), mem_code, color_on),
+        prefix_u + color(_sparkline(util_values, graph_width), util_code, color_on) + suffix,
+        prefix_m + color(_sparkline(mem_values, graph_width), mem_code, color_on) + suffix,
     ]
 
 
@@ -753,7 +772,7 @@ def _overview_block(
     show_procs: bool,
     cmd_align: str,
     selected_host: int,
-    gpu_lines: int,
+    history_lines: int,
     history: Optional[dict],
 ) -> List[str]:
     index, label, payload, err = entry
@@ -768,7 +787,7 @@ def _overview_block(
             float(g.get("mem_used") or 0.0) / float(g.get("mem_total") or 1.0) * 100.0
             for g in gpus
         ) / len(gpus)
-        stats = f"GPU×{len(gpus)}  avg U {avg_util:.0f}% · M {avg_mem:.0f}%"
+        stats = f"GPU×{len(gpus)}  avg GPU {avg_util:.0f}% · VRAM {avg_mem:.0f}%"
     else:
         stats = "no GPUs"
     tag = "local" if local else "remote"
@@ -784,6 +803,17 @@ def _overview_block(
         lines.append("│ (no GPUs)")
     else:
         gauge_w = 10 if width >= 80 else 6
+        lines.extend(
+            _host_history_lines(
+                history,
+                label,
+                width,
+                history_lines,
+                avg_util,
+                avg_mem,
+                color_on,
+            )
+        )
         for gpu in gpus:
             gi = int(gpu.get("index", -1))
             plist = grouped.get(gi) or []
@@ -799,13 +829,13 @@ def _overview_block(
             )
             util_code = util_level_code(util)
             mem_code = memory_level_code(mem_pct)
-            prefix = f"│ {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  U "
+            prefix = f"│ {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  GPU "
             row = (
                 prefix
                 + bar_color(util, gauge_w, color_on, util_code)
                 + " "
                 + color(f"{util:>3.0f}%", util_code, color_on)
-                + "  M "
+                + "  VRAM "
                 + bar_color(mem_pct, gauge_w, color_on, mem_code)
                 + " "
                 + color(f"{mem_pct:>3.0f}%", mem_code, color_on)
@@ -814,18 +844,6 @@ def _overview_block(
                 + f"  {power:.0f}W{reason_s}"
             )
             lines.append(row)
-            lines.extend(
-                _gpu_history_lines(
-                    history,
-                    label,
-                    gi,
-                    width,
-                    gpu_lines,
-                    util,
-                    mem_pct,
-                    color_on,
-                )
-            )
 
     summary = _command_summary(payload, width - 3, cmd_align) if show_procs else "CMD hidden (p to show)"
     while len(lines) < height - 1:
@@ -851,10 +869,10 @@ def render_overview(
     total_gpus, total_procs, avg_util, avg_mem = _cluster_stats(results)
     attention_tag = "  ATTENTION" if attention_only else ""
     if entries:
-        columns, block_height, _, page_size, gpu_lines = _overview_geometry(entries, cols, rows)
+        columns, block_height, _, page_size, history_lines = _overview_geometry(entries, cols, rows)
     else:
-        columns, block_height, page_size, gpu_lines = 1, 3, 1, 1
-    density = {1: "COMPACT", 2: "RICH", 3: "FULL"}[gpu_lines]
+        columns, block_height, page_size, history_lines = 1, 3, 1, 0
+    density = {0: "COMPACT", 1: "RICH", 2: "FULL"}[history_lines]
     title = (
         f" nvitop-cluster OVERVIEW/{density}{attention_tag} │ hosts={len(results)}  "
         f"gpus={total_gpus}  "
@@ -897,7 +915,7 @@ def render_overview(
                 show_procs,
                 cmd_align,
                 selected_host,
-                gpu_lines,
+                history_lines,
                 history,
             )
             for entry in visible[offset : offset + columns]

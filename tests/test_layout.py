@@ -60,11 +60,11 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("10.48.40.90", text)
         self.assertIn("10.48.40.97", text)
         self.assertIn("CMD ×8", text)
-        self.assertIn("U ███", text)
-        self.assertIn("M ███", text)
+        self.assertIn("GPU ███", text)
+        self.assertIn("VRAM ███", text)
         self.assertNotIn("#100000", text)
         self.assertIn("OVERVIEW/COMPACT", text)
-        self.assertNotIn("trend  U", text)
+        self.assertNotIn("history", text)
 
     def test_detail_layout_shows_only_selected_host(self):
         text = render_dashboard(
@@ -105,9 +105,10 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(max(map(len, lines)), 319)
         self.assertIn("10.48.40.97", text)
         self.assertIn("OVERVIEW/RICH", text)
-        self.assertIn("trend  U", text)
+        self.assertEqual(text.count("avg history"), 8)
+        self.assertNotIn("trend", text)
 
-    def test_very_wide_terminal_uses_full_per_gpu_history(self):
+    def test_very_wide_terminal_uses_full_host_history(self):
         results = fake_results()
         history = {}
         for _ in range(12):
@@ -127,8 +128,8 @@ class LayoutTests(unittest.TestCase):
             history=history,
         )
         self.assertIn("OVERVIEW/FULL", text)
-        self.assertIn("U history", text)
-        self.assertIn("M history", text)
+        self.assertEqual(text.count("avg GPU history"), 8)
+        self.assertEqual(text.count("avg VRAM history"), 8)
         self.assertIn("████", text)
         self.assertLessEqual(len(text.splitlines()), 77)
         self.assertEqual(max(map(len, text.splitlines())), 400)
@@ -140,6 +141,8 @@ class LayoutTests(unittest.TestCase):
             _update_history(history, results, maxlen=3)
         key = _history_key("10.48.40.90 (local)", 0, "util")
         self.assertEqual(len(history[key]), 3)
+        host_key = _history_key("10.48.40.90 (local)", -1, "util")
+        self.assertEqual(len(history[host_key]), 3)
 
     def test_attention_layout_reports_all_healthy(self):
         text = render_dashboard(
