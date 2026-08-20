@@ -20,6 +20,7 @@ import sys
 import termios
 import time
 import tty
+from collections import deque
 from typing import Dict, List, Optional, Sequence, Tuple
 
 HOSTFILE_CANDIDATES = (
@@ -623,7 +624,7 @@ def _overview_geometry(
     entries: Sequence[Tuple[int, str, Optional[dict], Optional[str]]],
     cols: int,
     rows: int,
-) -> Tuple[int, int, int, int]:
+) -> Tuple[int, int, int, int, int]:
     # Keep cards readable while using high-resolution terminals.  A 215-column
     # pane gets two cards, ~300 gets three, and ~400 gets four.
     columns = min(max(1, len(entries)), max(1, min(4, cols // 92)))
@@ -631,11 +632,100 @@ def _overview_geometry(
         (len((payload or {}).get("gpus") or []) for _, _, payload, _ in entries),
         default=1,
     )
-    block_height = max(3, max_gpus + 2)  # host header + GPUs + command summary
-    available = max(block_height, rows - 4)  # title, separator, footer, safety
-    block_rows = max(1, (available + 1) // (block_height + 1))
+    compact_height = max(3, max_gpus + 2)  # host header + GPUs + command summary
+    available = max(compact_height, rows - 4)  # title, separator, footer, safety
+    block_rows = max(1, (available + 1) // (compact_height + 1))
     page_size = max(1, columns * block_rows)
-    return columns, block_height, block_rows, page_size
+
+    # If every host fits, spend surplus vertical area on per-GPU history.
+    # Design references (principles only; no GPL TUI code is copied):
+    # - nvitop auto/full/compact: https://github.com/XuehaiPan/nvitop#monitor-mode
+    # - btop resizable history graphs: https://github.com/aristocratos/btop#configurability
+    gpu_lines = 1
+    block_height = compact_height
+    if len(entries) <= page_size:
+        host_rows = max(1, (len(entries) + columns - 1) // columns)
+        usable = max(compact_height, rows - 4 - (host_rows - 1))
+        per_block = usable // host_rows
+        gpu_lines = max(1, min(3, (per_block - 2) // max_gpus))
+        block_height = max(3, 2 + max_gpus * gpu_lines)
+        block_rows = host_rows
+        page_size = columns * block_rows
+    return columns, block_height, block_rows, page_size, gpu_lines
+
+
+_SPARKS = "▁▂▃▄▅▆▇█"
+
+
+def _history_key(label: str, gpu_index: int, metric: str) -> Tuple[str, int, str]:
+    return label.replace(" (local)", ""), gpu_index, metric
+
+
+def _update_history(
+    history: dict,
+    results: Sequence[Tuple[str, Optional[dict], Optional[str]]],
+    maxlen: int = 512,
+) -> None:
+    """Append one probe sample per GPU; retain a bounded resize-friendly window."""
+    for label, payload, err in results:
+        if err or not payload:
+            continue
+        for gpu in payload.get("gpus") or []:
+            gi = int(gpu.get("index", -1))
+            total = float(gpu.get("mem_total") or 0.0)
+            used = float(gpu.get("mem_used") or 0.0)
+            values = {
+                "util": float(gpu.get("util") or 0.0),
+                "mem": used / total * 100.0 if total else 0.0,
+            }
+            for metric, value in values.items():
+                key = _history_key(label, gi, metric)
+                if key not in history:
+                    history[key] = deque(maxlen=maxlen)
+                history[key].append(value)
+
+
+def _sparkline(values: Sequence[float], width: int) -> str:
+    width = max(1, width)
+    recent = list(values)[-width:]
+    chars = []
+    for value in recent:
+        value = max(0.0, min(100.0, float(value)))
+        index = min(len(_SPARKS) - 1, int(value / 100.0 * len(_SPARKS)))
+        chars.append(_SPARKS[index])
+    return "".join(chars).rjust(width)
+
+
+def _gpu_history_lines(
+    history: Optional[dict],
+    label: str,
+    gpu_index: int,
+    width: int,
+    gpu_lines: int,
+    util: float,
+    mem_pct: float,
+    color_on: bool,
+) -> List[str]:
+    if gpu_lines <= 1:
+        return []
+    util_values = (history or {}).get(_history_key(label, gpu_index, "util"), (util,))
+    mem_values = (history or {}).get(_history_key(label, gpu_index, "mem"), (mem_pct,))
+    util_code = util_level_code(util)
+    mem_code = memory_level_code(mem_pct)
+    if gpu_lines == 2:
+        prefix = "│      trend  U "
+        graph_width = max(4, (width - len(prefix) - len("  M ")) // 2)
+        util_graph = color(_sparkline(util_values, graph_width), util_code, color_on)
+        mem_graph = color(_sparkline(mem_values, graph_width), mem_code, color_on)
+        return [f"{prefix}{util_graph}  M {mem_graph}"]
+
+    prefix_u = "│      U history "
+    prefix_m = "│      M history "
+    graph_width = max(4, width - max(len(prefix_u), len(prefix_m)))
+    return [
+        prefix_u + color(_sparkline(util_values, graph_width), util_code, color_on),
+        prefix_m + color(_sparkline(mem_values, graph_width), mem_code, color_on),
+    ]
 
 
 def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
@@ -663,6 +753,8 @@ def _overview_block(
     show_procs: bool,
     cmd_align: str,
     selected_host: int,
+    gpu_lines: int,
+    history: Optional[dict],
 ) -> List[str]:
     index, label, payload, err = entry
     local = label.endswith(" (local)")
@@ -722,6 +814,18 @@ def _overview_block(
                 + f"  {power:.0f}W{reason_s}"
             )
             lines.append(row)
+            lines.extend(
+                _gpu_history_lines(
+                    history,
+                    label,
+                    gi,
+                    width,
+                    gpu_lines,
+                    util,
+                    mem_pct,
+                    color_on,
+                )
+            )
 
     summary = _command_summary(payload, width - 3, cmd_align) if show_procs else "CMD hidden (p to show)"
     while len(lines) < height - 1:
@@ -739,14 +843,21 @@ def render_overview(
     cmd_align: str = "left",
     selected_host: int = 0,
     attention_only: bool = False,
+    history: Optional[dict] = None,
 ) -> str:
     """Render an all-host dashboard that adapts to terminal width and height."""
     width = cols
     entries = _overview_entries(results, attention_only)
     total_gpus, total_procs, avg_util, avg_mem = _cluster_stats(results)
     attention_tag = "  ATTENTION" if attention_only else ""
+    if entries:
+        columns, block_height, _, page_size, gpu_lines = _overview_geometry(entries, cols, rows)
+    else:
+        columns, block_height, page_size, gpu_lines = 1, 3, 1, 1
+    density = {1: "COMPACT", 2: "RICH", 3: "FULL"}[gpu_lines]
     title = (
-        f" nvitop-cluster OVERVIEW{attention_tag} │ hosts={len(results)}  gpus={total_gpus}  "
+        f" nvitop-cluster OVERVIEW/{density}{attention_tag} │ hosts={len(results)}  "
+        f"gpus={total_gpus}  "
         f"procs={total_procs}  avg-util={avg_util:.0f}%  avg-mem={avg_mem:.0f}%  "
         f"{time.strftime('%H:%M:%S')}"
     )
@@ -769,7 +880,6 @@ def render_overview(
         )
         return "\n".join(lines)
 
-    columns, block_height, _, page_size = _overview_geometry(entries, cols, rows)
     selected_pos = next((i for i, item in enumerate(entries) if item[0] == selected_host), 0)
     page = selected_pos // page_size
     page_count = max(1, (len(entries) + page_size - 1) // page_size)
@@ -787,6 +897,8 @@ def render_overview(
                 show_procs,
                 cmd_align,
                 selected_host,
+                gpu_lines,
+                history,
             )
             for entry in visible[offset : offset + columns]
         ]
@@ -802,7 +914,7 @@ def render_overview(
     lines.append(
         color(
             _fit_plain(
-                f" {page_tag}  │  g overview  j/k host  Enter detail  p procs  "
+                f" {page_tag}  density={density.lower()}  │  g overview  j/k host  Enter detail  p procs  "
                 "x attention  [/] page  C-a/C-e CMD  q quit",
                 width,
             ),
@@ -842,6 +954,7 @@ def render_dashboard(
     layout: str,
     selected_host: int,
     attention_only: bool,
+    history: Optional[dict] = None,
 ) -> str:
     effective = layout
     if effective == "auto":
@@ -856,6 +969,7 @@ def render_dashboard(
             cmd_align=cmd_align,
             selected_host=selected_host,
             attention_only=attention_only,
+            history=history,
         )
     detail_results = results
     if layout == "detail" and results:
@@ -1091,11 +1205,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "quit": False,
     }
     # cache last probe results so C-a/C-e redraw is instant without re-SSH
-    cache: dict = {"res": None}
+    cache: dict = {"res": None, "history": {}}
 
     def once(force_collect: bool = True):
         if force_collect or cache["res"] is None:
             cache["res"] = collect(hosts)
+            _update_history(cache["history"], cache["res"])
         results = cache["res"] or []
         cols, rows = term_size()
 
@@ -1114,7 +1229,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             move = int(state.pop("host_move", 0) or 0)
             page_move = int(state.pop("page_move", 0) or 0)
             if page_move:
-                _, _, _, page_size = _overview_geometry(entries, cols, rows)
+                _, _, _, page_size, _ = _overview_geometry(entries, cols, rows)
                 move += page_move * page_size
             state["selected_host"] = visible_indices[(pos + move) % len(visible_indices)]
         else:
@@ -1133,6 +1248,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             layout=state["layout"],
             selected_host=state["selected_host"],
             attention_only=state["attention_only"],
+            history=cache["history"],
         )
         if watch is not None:
             sys.stdout.write("\033[H\033[J")

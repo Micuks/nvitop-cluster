@@ -15,7 +15,7 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 - **Hostfile discovery**: `/etc/mpi/hostfile`, `/etc/mpi/mpi-hostfile`, or `-f PATH`
 - **Local + remote**: local probe without SSH; peers via `ssh` (optional KML-style `ssh_config`)
 - **Wide dual bars**: GPU-Util and Memory-Usage (width scales with terminal)
-- **Adaptive overview**: 8×8 and larger jobs use side-by-side host cards sized to the terminal
+- **Adaptive density**: compact gauges expand into per-GPU U/M history when host/card count leaves room
 - **Command deduplication**: repeated rank commands collapse to one `CMD ×N` row per host
 - **Process names**: optional host-PID → container-PID remap for Kubernetes/container jobs
 - **Watch mode by default** (2s); keys:
@@ -135,10 +135,17 @@ python3 -m nvitop_cluster  # same as nvitop-cluster
 ### Adaptive layouts
 
 `--layout auto` estimates the detailed view's physical height using the current
-terminal dimensions. If it would overflow, nvitop-cluster switches to compact
-host cards. On a 215×58 terminal, an 8-node × 8-GPU job fits in 46 rows with two
-hosts side by side. Each GPU keeps utilization, memory, temperature, power,
-process count, and PID; identical process commands are shown once as `CMD ×8`.
+terminal dimensions. If it would overflow, nvitop-cluster switches to host
+cards, then calculates how many lines each GPU can receive from the remaining
+area:
+
+- **COMPACT** — one line/GPU with current utilization, memory, temperature, and power
+- **RICH** — adds a combined utilization/memory history line per GPU
+- **FULL** — gives utilization and memory separate full-width history lines
+
+If all hosts do not fit at COMPACT density, the view paginates. History is
+retained in a bounded in-memory window and survives terminal resizes during the
+same monitor session. Identical process commands remain collapsed to `CMD ×N`.
 
 Press `Enter` for the selected host's full bars and command lines, then `g` to
 return. Press `x` to temporarily show only GPUs that need attention.
