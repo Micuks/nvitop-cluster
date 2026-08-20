@@ -60,11 +60,12 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("10.48.40.90", text)
         self.assertIn("10.48.40.97", text)
         self.assertIn("CMD ×8", text)
-        self.assertIn("GPU ███", text)
-        self.assertIn("VRAM ███", text)
+        self.assertIn("UTIL", text)
+        self.assertIn("VRAM", text)
         self.assertNotIn("#100000", text)
         self.assertIn("OVERVIEW/COMPACT", text)
-        self.assertNotIn("history", text)
+        self.assertNotIn("HISTORY", text)
+        self.assertEqual(lines[1].count("╮"), 2)
 
     def test_detail_layout_shows_only_selected_host(self):
         text = render_dashboard(
@@ -104,9 +105,12 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(lines[1].count("╭─"), 3)
         self.assertEqual(max(map(len, lines)), 319)
         self.assertIn("10.48.40.97", text)
-        self.assertIn("OVERVIEW/RICH", text)
-        self.assertEqual(text.count("avg history"), 8)
+        self.assertIn("OVERVIEW/FULL", text)
+        self.assertEqual(text.count("UTIL HISTORY"), 8)
+        self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertNotIn("trend", text)
+        self.assertIn("100┤", text)
+        self.assertEqual(lines[1].count("╮"), 3)
 
     def test_very_wide_terminal_uses_full_host_history(self):
         results = fake_results()
@@ -128,8 +132,8 @@ class LayoutTests(unittest.TestCase):
             history=history,
         )
         self.assertIn("OVERVIEW/FULL", text)
-        self.assertEqual(text.count("avg GPU history"), 8)
-        self.assertEqual(text.count("avg VRAM history"), 8)
+        self.assertEqual(text.count("UTIL HISTORY"), 8)
+        self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertIn("████", text)
         self.assertLessEqual(len(text.splitlines()), 77)
         self.assertEqual(max(map(len, text.splitlines())), 400)

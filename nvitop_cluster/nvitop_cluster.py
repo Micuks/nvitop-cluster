@@ -625,43 +625,51 @@ def _overview_geometry(
     cols: int,
     rows: int,
 ) -> Tuple[int, int, int, int, int]:
-    # Keep cards readable while using high-resolution terminals.  A 215-column
-    # pane gets two cards, ~300 gets three, and ~400 gets four.
-    columns = min(max(1, len(entries)), max(1, min(4, cols // 92)))
+    # Pick a grid by usable detail, not width alone.  This keeps 8-host jobs at
+    # 2x4 on a 215x58 pane, but prefers a balanced 3x3 dashboard on a large
+    # pane instead of short cards plus a half-empty screen.
+    max_columns = min(max(1, len(entries)), max(1, min(4, cols // 92)))
     max_gpus = max(
         (len((payload or {}).get("gpus") or []) for _, _, payload, _ in entries),
         default=1,
     )
-    compact_height = max(3, max_gpus + 2)  # host header + GPUs + command summary
-    available = max(compact_height, rows - 4)  # title, separator, footer, safety
-    block_rows = max(1, (available + 1) // (compact_height + 1))
-    page_size = max(1, columns * block_rows)
+    # top border + summary + table header + GPUs + command/bottom border
+    compact_height = max(4, max_gpus + 4)
 
-    # If every host fits, spend surplus card area on host-level history.  The
-    # threshold uses cells per GPU, so both terminal width and height matter.
+    # If every host fits, choose the grid with the tallest useful chart.  At a
+    # tie prefer wider cards.  Graphs need at least five lines to be legible.
     # Design references (principles only; no GPL TUI code is copied):
     # - nvitop auto/full/compact: https://github.com/XuehaiPan/nvitop#monitor-mode
     # - btop resizable history graphs: https://github.com/aristocratos/btop#configurability
-    history_lines = 0
-    block_height = compact_height
-    if len(entries) <= page_size:
-        host_rows = max(1, (len(entries) + columns - 1) // columns)
-        usable = max(compact_height, rows - 4 - (host_rows - 1))
+    choices = []
+    for candidate in range(1, max_columns + 1):
+        host_rows = max(1, (len(entries) + candidate - 1) // candidate)
+        usable = rows - 4 - (host_rows - 1)
         per_block = usable // host_rows
-        gap_width = 3 if columns > 1 else 0
-        block_width = (cols - gap_width * (columns - 1)) // columns
-        cells_per_gpu = block_width * per_block / max_gpus
-        if cells_per_gpu >= 360:
-            history_lines = 2
-        elif cells_per_gpu >= 220:
-            history_lines = 1
+        if per_block < compact_height:
+            continue
+        gap_width = 3 if candidate > 1 else 0
+        block_width = (cols - gap_width * (candidate - 1)) // candidate
+        surplus = per_block - compact_height
+        graph_lines = min(11, surplus) if surplus >= 5 else 0
+        choices.append((graph_lines, block_width, candidate, host_rows))
+
+    if choices:
+        history_lines, _, columns, block_rows = max(choices, key=lambda item: (item[0], item[1]))
         block_height = compact_height + history_lines
-        block_rows = host_rows
         page_size = columns * block_rows
-    return columns, block_height, block_rows, page_size, history_lines
+        return columns, block_height, block_rows, page_size, history_lines
 
-
-_SPARKS = "▁▂▃▄▅▆▇█"
+    # Compact pagination fallback when even the full host set cannot fit.
+    fallback = []
+    for candidate in range(1, max_columns + 1):
+        block_rows = max(1, (rows - 3) // (compact_height + 1))
+        page_size = candidate * block_rows
+        gap_width = 3 if candidate > 1 else 0
+        block_width = (cols - gap_width * (candidate - 1)) // candidate
+        fallback.append((page_size, block_width, candidate, block_rows))
+    page_size, _, columns, block_rows = max(fallback, key=lambda item: (item[0], item[1]))
+    return columns, compact_height, block_rows, page_size, 0
 
 
 def _history_key(label: str, gpu_index: int, metric: str) -> Tuple[str, int, str]:
@@ -702,15 +710,43 @@ def _update_history(
             history[key].append(sum(values) / len(values))
 
 
-def _sparkline(values: Sequence[float], width: int) -> str:
-    width = max(1, width)
-    recent = list(values)[-width:]
-    chars = []
-    for value in recent:
+def _history_chart(
+    values: Sequence[float],
+    width: int,
+    height: int,
+    title: str,
+    latest: float,
+    code: str,
+    color_on: bool,
+) -> List[str]:
+    """Render a bounded 0–100 line trace, never a filled progress area."""
+    width = max(12, width)
+    height = max(5, height)
+    plot_height = height - 2  # title + time axis
+    plot_width = max(4, width - 4)
+    grid = [[" " for _ in range(plot_width)] for _ in range(plot_height)]
+    recent = list(values)[-plot_width:]
+    offset = plot_width - len(recent)
+    for sample_index, value in enumerate(recent):
         value = max(0.0, min(100.0, float(value)))
-        index = min(len(_SPARKS) - 1, int(value / 100.0 * len(_SPARKS)))
-        chars.append(_SPARKS[index])
-    return "".join(chars).rjust(width, "·")
+        row = int(round((100.0 - value) / 100.0 * (plot_height - 1)))
+        grid[row][offset + sample_index] = "•"
+
+    lines = [color(_fit_plain(f"{title}  now {latest:3.0f}%", width), code, color_on)]
+    middle = (plot_height - 1) // 2
+    for row, cells in enumerate(grid):
+        if row == 0:
+            label = "100"
+        elif row == plot_height - 1:
+            label = "  0"
+        elif row == middle:
+            label = " 50"
+        else:
+            label = "   "
+        trace = color("".join(cells), code, color_on)
+        lines.append(f"{label}┤{trace}")
+    lines.append("   └" + "─" * max(1, plot_width - 1) + "▶")
+    return [_pad_visible(line, width) for line in lines[:height]]
 
 
 def _host_history_lines(
@@ -722,29 +758,47 @@ def _host_history_lines(
     avg_mem: float,
     color_on: bool,
 ) -> List[str]:
-    if history_lines <= 0:
+    if history_lines < 5:
         return []
     util_values = (history or {}).get(_history_key(label, -1, "util"), (avg_util,))
     mem_values = (history or {}).get(_history_key(label, -1, "mem"), (avg_mem,))
-    util_code = util_level_code(avg_util)
-    mem_code = memory_level_code(avg_mem)
-    if history_lines == 1:
-        prefix = "│ avg history  GPU ["
-        middle = "]  VRAM ["
-        suffix = "]"
-        graph_width = max(4, (width - len(prefix) - len(middle) - len(suffix)) // 2)
-        util_graph = color(_sparkline(util_values, graph_width), util_code, color_on)
-        mem_graph = color(_sparkline(mem_values, graph_width), mem_code, color_on)
-        return [f"{prefix}{util_graph}{middle}{mem_graph}{suffix}"]
-
-    prefix_u = "│ avg GPU history  ["
-    prefix_m = "│ avg VRAM history ["
-    suffix = "]"
-    graph_width = max(4, width - max(len(prefix_u), len(prefix_m)) - len(suffix))
+    inner_width = max(24, width - 2)
+    gap = "   "
+    chart_width = (inner_width - len(gap)) // 2
+    util_chart = _history_chart(
+        util_values, chart_width, history_lines, "UTIL HISTORY", avg_util,
+        util_level_code(avg_util), color_on,
+    )
+    mem_chart = _history_chart(
+        mem_values, chart_width, history_lines, "VRAM HISTORY", avg_mem,
+        memory_level_code(avg_mem), color_on,
+    )
     return [
-        prefix_u + color(_sparkline(util_values, graph_width), util_code, color_on) + suffix,
-        prefix_m + color(_sparkline(mem_values, graph_width), mem_code, color_on) + suffix,
+        _pad_visible(left, chart_width) + gap + _pad_visible(right, chart_width)
+        for left, right in zip(util_chart, mem_chart)
     ]
+
+
+def _card_row(content: str, width: int) -> str:
+    return "│" + _pad_visible(content, max(1, width - 2)) + "│"
+
+
+def _card_top(left: str, right: str, width: int, code: str, color_on: bool) -> str:
+    inner_width = max(1, width - 2)
+    left = f"─{left} "
+    right = f" {right}─"
+    if len(left) + len(right) > inner_width:
+        inside = _fit_plain(left + right, inner_width)
+    else:
+        inside = left + "─" * (inner_width - len(left) - len(right)) + right
+    return color("╭" + inside + "╮", code, color_on)
+
+
+def _card_bottom(summary: str, width: int, color_on: bool) -> str:
+    inner_width = max(1, width - 2)
+    summary = "─ " + _fit_plain(summary.strip(), max(1, inner_width - 4)) + " "
+    inside = summary + "─" * max(0, inner_width - len(summary))
+    return color("╰" + inside[:inner_width] + "╯", "90", color_on)
 
 
 def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
@@ -778,7 +832,7 @@ def _overview_block(
     index, label, payload, err = entry
     local = label.endswith(" (local)")
     host = label.replace(" (local)", "")
-    marker = "▸" if index == selected_host else " "
+    selected = index == selected_host
     gpus = (payload or {}).get("gpus") or []
     grouped = _by_gpu(payload)
     if gpus:
@@ -787,33 +841,55 @@ def _overview_block(
             float(g.get("mem_used") or 0.0) / float(g.get("mem_total") or 1.0) * 100.0
             for g in gpus
         ) / len(gpus)
-        stats = f"GPU×{len(gpus)}  avg GPU {avg_util:.0f}% · VRAM {avg_mem:.0f}%"
     else:
-        stats = "no GPUs"
+        avg_util = 0.0
+        avg_mem = 0.0
     tag = "local" if local else "remote"
-    header_plain = _fit_plain(f"╭─{marker} {host} {tag}  {stats}", width)
-    header_code = "1;30;46" if index == selected_host else "36"
-    lines = [color(header_plain, header_code, color_on)]
+    header_code = "1;96" if selected else "36"
+    gpu_types = sorted({short_gpu_name(gpu.get("name", "")) for gpu in gpus})
+    gpu_tag = f"{len(gpus)}×{gpu_types[0]}" if len(gpu_types) == 1 else f"{len(gpus)} GPUs"
+    host_title = f"▸ {host} {tag}" if selected else f" {host} {tag}"
+    lines = [_card_top(host_title, gpu_tag, width, header_code, color_on)]
 
     if err:
-        lines.append(color(_fit_plain(f"│ ERROR {err}", width), "91", color_on))
+        lines.append(_card_row(color(f" ERROR  {err}", "91", color_on), width))
     elif not payload:
-        lines.append(color("│ (no data)", "91", color_on))
+        lines.append(_card_row(color(" (no data)", "91", color_on), width))
     elif not gpus:
-        lines.append("│ (no GPUs)")
+        lines.append(_card_row(" (no GPUs)", width))
     else:
-        gauge_w = 10 if width >= 80 else 6
+        attention_count = sum(
+            bool(_attention_reasons(gpu, grouped.get(int(gpu.get("index", -1)), [])))
+            for gpu in gpus
+        )
+        status = (
+            color(f"ATTN {attention_count}", "91", color_on)
+            if attention_count
+            else color("OK", "92", color_on)
+        )
+        summary = (
+            " AVG  UTIL "
+            + color(f"{avg_util:>3.0f}%", util_level_code(avg_util), color_on)
+            + "   VRAM "
+            + color(f"{avg_mem:>3.0f}%", memory_level_code(avg_mem), color_on)
+            + f"   PROCS {len(payload.get('procs') or []):>2}   "
+            + status
+        )
+        lines.append(_card_row(summary, width))
         lines.extend(
-            _host_history_lines(
-                history,
-                label,
-                width,
-                history_lines,
-                avg_util,
-                avg_mem,
-                color_on,
+            _card_row(chart_line, width)
+            for chart_line in _host_history_lines(
+                history, label, width, history_lines, avg_util, avg_mem, color_on
             )
         )
+
+        gauge_w = max(6, min(12, (width - 62) // 2))
+        metric_width = gauge_w + 5
+        table_header = (
+            f"  # TYPE   {'UTIL':<{metric_width}}  {'VRAM':<{metric_width}}  "
+            f"{'USED/TOTAL':>10} {'TEMP':>4} {'PWR':>5}"
+        )
+        lines.append(_card_row(color(table_header, "2", color_on), width))
         for gpu in gpus:
             gi = int(gpu.get("index", -1))
             plist = grouped.get(gi) or []
@@ -829,26 +905,29 @@ def _overview_block(
             )
             util_code = util_level_code(util)
             mem_code = memory_level_code(mem_pct)
-            prefix = f"│ {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  GPU "
             row = (
-                prefix
+                f" {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  "
                 + bar_color(util, gauge_w, color_on, util_code)
                 + " "
                 + color(f"{util:>3.0f}%", util_code, color_on)
-                + "  VRAM "
+                + "  "
                 + bar_color(mem_pct, gauge_w, color_on, mem_code)
                 + " "
                 + color(f"{mem_pct:>3.0f}%", mem_code, color_on)
-                + f"  {used/1024:.1f}/{total/1024:.0f}G  "
-                + color(f"{temp:.0f}C", level_code(min(100.0, max(0.0, (temp - 30) * 2))), color_on)
-                + f"  {power:.0f}W{reason_s}"
+                + f"  {used/1024:>4.1f}/{total/1024:.0f}G "
+                + color(
+                    f"{temp:>3.0f}C",
+                    level_code(min(100.0, max(0.0, (temp - 30) * 2))),
+                    color_on,
+                )
+                + f" {power:>4.0f}W{reason_s}"
             )
-            lines.append(row)
+            lines.append(_card_row(row, width))
 
-    summary = _command_summary(payload, width - 3, cmd_align) if show_procs else "CMD hidden (p to show)"
+    command = _command_summary(payload, width - 6, cmd_align) if show_procs else "CMD hidden (p to show)"
     while len(lines) < height - 1:
-        lines.append("│")
-    lines.append(color("╰─ " + summary.strip(), "90", color_on))
+        lines.append(_card_row("", width))
+    lines.append(_card_bottom(command, width, color_on))
     return [_pad_visible(line, width) for line in lines[:height]]
 
 
@@ -872,7 +951,7 @@ def render_overview(
         columns, block_height, _, page_size, history_lines = _overview_geometry(entries, cols, rows)
     else:
         columns, block_height, page_size, history_lines = 1, 3, 1, 0
-    density = {0: "COMPACT", 1: "RICH", 2: "FULL"}[history_lines]
+    density = "COMPACT" if history_lines == 0 else ("RICH" if history_lines <= 7 else "FULL")
     title = (
         f" nvitop-cluster OVERVIEW/{density}{attention_tag} │ hosts={len(results)}  "
         f"gpus={total_gpus}  "

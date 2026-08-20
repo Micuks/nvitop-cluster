@@ -15,7 +15,7 @@ Designed for multi-node jobs (e.g. DeepSpeed / torchrun / MPI) where plain `nvit
 - **Hostfile discovery**: `/etc/mpi/hostfile`, `/etc/mpi/mpi-hostfile`, or `-f PATH`
 - **Local + remote**: local probe without SSH; peers via `ssh` (optional KML-style `ssh_config`)
 - **Wide dual bars**: GPU-Util and Memory-Usage (width scales with terminal)
-- **Adaptive density**: compact per-GPU gauges add one host-average GPU/VRAM history panel when terminal area leaves room
+- **Adaptive density**: compact per-GPU tables expand into host-average UTIL/VRAM line charts when terminal area leaves room
 - **Command deduplication**: repeated rank commands collapse to one `CMD ×N` row per host
 - **Process names**: optional host-PID → container-PID remap for Kubernetes/container jobs
 - **Watch mode by default** (2s); keys:
@@ -139,8 +139,8 @@ terminal dimensions. If it would overflow, nvitop-cluster switches to host
 cards, then calculates detail density from the available terminal area per GPU:
 
 - **COMPACT** — one line/GPU with current utilization, memory, temperature, and power
-- **RICH** — adds one bounded host-average utilization/memory history row per card
-- **FULL** — gives host-average utilization and memory separate full-width history rows
+- **RICH** — adds compact host-average utilization and VRAM time-series charts
+- **FULL** — expands those charts vertically and balances the host-card grid to use the available screen
 
 If all hosts do not fit at COMPACT density, the view paginates. History is
 retained in a bounded in-memory window and survives terminal resizes during the
