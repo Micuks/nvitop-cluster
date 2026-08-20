@@ -60,6 +60,9 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("10.48.40.90", text)
         self.assertIn("10.48.40.97", text)
         self.assertIn("CMD ×8", text)
+        self.assertIn("U ███", text)
+        self.assertIn("M ███", text)
+        self.assertNotIn("#100000", text)
 
     def test_detail_layout_shows_only_selected_host(self):
         text = render_dashboard(
@@ -76,6 +79,7 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
         )
         self.assertIn("10.48.40.93", text)
+        self.assertIn("100030", text)
         self.assertNotIn("10.48.40.92", text)
         self.assertNotIn("10.48.40.94", text)
         self.assertLessEqual(max(map(len, text.splitlines())), 215)
@@ -112,7 +116,7 @@ class LayoutTests(unittest.TestCase):
             selected_host=0,
             attention_only=True,
         )
-        self.assertIn("!idle", text)
+        self.assertIn("⚠ idle", text)
         self.assertNotIn("  1 H800", text)
 
 

@@ -184,7 +184,7 @@ def util_color(u: float, enable: bool) -> str:
     return color(f"{u:5.1f}%", level_code(u), enable)
 
 
-def bar_color(pct: float, width: int, enable: bool) -> str:
+def bar_color(pct: float, width: int, enable: bool, used_code: Optional[str] = None) -> str:
     """Color used (█) by level; free (░) always dim — clean used|free boundary."""
     pct = max(0.0, min(100.0, float(pct)))
     width = max(1, int(width))
@@ -194,7 +194,24 @@ def bar_color(pct: float, width: int, enable: bool) -> str:
     free = "░" * (width - filled)
     if not enable:
         return used + free
-    return color(used, level_code(pct), True) + color(free, "90", True)
+    return color(used, used_code or level_code(pct), True) + color(free, "90", True)
+
+
+def util_level_code(pct: float) -> str:
+    """Training-oriented utilization colors: busy is healthy, idle is not."""
+    if pct >= 70:
+        return "92"  # green
+    if pct >= 20:
+        return "93"  # yellow
+    return "91"  # red
+
+
+def memory_level_code(pct: float) -> str:
+    if pct >= 90:
+        return "91"
+    if pct >= 75:
+        return "93"
+    return "96"  # cyan for normal allocated memory
 
 
 def short_gpu_name(name: str) -> str:
@@ -263,7 +280,7 @@ def normalize_cmd(cmd: str) -> str:
         cmd = cmd.replace(pref, "")
     # drop leading bare python -u for density (path already stripped)
     toks = cmd.split()
-    if toks and toks[0] in ("python", "python3"):
+    if toks and os.path.basename(toks[0]).startswith("python"):
         i = 1
         while i < len(toks) and toks[i] in ("-u", "-O", "-B"):
             i += 1
@@ -657,21 +674,22 @@ def _overview_block(
             float(g.get("mem_used") or 0.0) / float(g.get("mem_total") or 1.0) * 100.0
             for g in gpus
         ) / len(gpus)
-        stats = f"avg U{avg_util:.0f}% M{avg_mem:.0f}%"
+        stats = f"GPU×{len(gpus)}  avg U {avg_util:.0f}% · M {avg_mem:.0f}%"
     else:
         stats = "no GPUs"
     tag = "local" if local else "remote"
-    header_plain = _fit_plain(f"{marker} {host} {tag}  {stats}", width)
+    header_plain = _fit_plain(f"╭─{marker} {host} {tag}  {stats}", width)
     header_code = "1;30;46" if index == selected_host else "36"
     lines = [color(header_plain, header_code, color_on)]
 
     if err:
-        lines.append(color(_fit_plain(f" ERROR {err}", width), "91", color_on))
+        lines.append(color(_fit_plain(f"│ ERROR {err}", width), "91", color_on))
     elif not payload:
-        lines.append(color(" (no data)", "91", color_on))
+        lines.append(color("│ (no data)", "91", color_on))
     elif not gpus:
-        lines.append(" (no GPUs)")
+        lines.append("│ (no GPUs)")
     else:
+        gauge_w = 10 if width >= 80 else 6
         for gpu in gpus:
             gi = int(gpu.get("index", -1))
             plist = grouped.get(gi) or []
@@ -681,28 +699,32 @@ def _overview_block(
             util = float(gpu.get("util") or 0.0)
             temp = float(gpu.get("temp") or 0.0)
             power = float(gpu.get("power") or 0.0)
-            pid = plist[0].get("pid") if plist else None
-            proc_s = f"P{len(plist)}"
-            if pid is not None:
-                proc_s += f" #{pid}"
             reason = _attention_reasons(gpu, plist)
-            reason_s = f" !{'+'.join(reason)}" if reason else ""
-            prefix = f" {gi:>2} {short_gpu_name(gpu.get('name', '')):<5} U"
+            reason_s = (
+                " " + color(f"⚠ {'+'.join(reason)}", "91", color_on) if reason else ""
+            )
+            util_code = util_level_code(util)
+            mem_code = memory_level_code(mem_pct)
+            prefix = f"│ {gi:>2} {short_gpu_name(gpu.get('name', '')):<5}  U "
             row = (
                 prefix
-                + color(f"{util:>3.0f}%", level_code(util), color_on)
-                + " M"
-                + color(f"{mem_pct:>3.0f}%", level_code(mem_pct), color_on)
-                + f" {used/1024:.1f}/{total/1024:.0f}Gi "
+                + bar_color(util, gauge_w, color_on, util_code)
+                + " "
+                + color(f"{util:>3.0f}%", util_code, color_on)
+                + "  M "
+                + bar_color(mem_pct, gauge_w, color_on, mem_code)
+                + " "
+                + color(f"{mem_pct:>3.0f}%", mem_code, color_on)
+                + f"  {used/1024:.1f}/{total/1024:.0f}G  "
                 + color(f"{temp:.0f}C", level_code(min(100.0, max(0.0, (temp - 30) * 2))), color_on)
-                + f" {power:.0f}W {proc_s}{reason_s}"
+                + f"  {power:.0f}W{reason_s}"
             )
             lines.append(row)
 
-    summary = _command_summary(payload, width, cmd_align) if show_procs else " CMD hidden (p to show)"
-    lines.append(color(summary, "90", color_on))
-    while len(lines) < height:
-        lines.append("")
+    summary = _command_summary(payload, width - 3, cmd_align) if show_procs else "CMD hidden (p to show)"
+    while len(lines) < height - 1:
+        lines.append("│")
+    lines.append(color("╰─ " + summary.strip(), "90", color_on))
     return [_pad_visible(line, width) for line in lines[:height]]
 
 
@@ -750,7 +772,7 @@ def render_overview(
     page = selected_pos // page_size
     page_count = max(1, (len(entries) + page_size - 1) // page_size)
     visible = entries[page * page_size : (page + 1) * page_size]
-    gap = " │ " if columns == 2 else ""
+    gap = "   " if columns == 2 else ""
     block_width = width if columns == 1 else (width - len(gap)) // 2
 
     for offset in range(0, len(visible), columns):
