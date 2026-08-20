@@ -87,7 +87,7 @@ class LayoutTests(unittest.TestCase):
         self.assertNotIn("10.48.40.94", text)
         self.assertLessEqual(max(map(len, text.splitlines())), 215)
 
-    def test_wide_terminal_uses_three_columns_and_full_width(self):
+    def test_wide_terminal_uses_four_by_two_and_full_width(self):
         text = render_dashboard(
             fake_results(),
             color_on=False,
@@ -102,7 +102,7 @@ class LayoutTests(unittest.TestCase):
             attention_only=False,
         )
         lines = text.splitlines()
-        self.assertEqual(lines[1].count("╭─"), 3)
+        self.assertEqual(lines[1].count("╭─"), 4)
         self.assertEqual(max(map(len, lines)), 319)
         self.assertIn("10.48.40.97", text)
         self.assertIn("OVERVIEW/FULL", text)
@@ -110,7 +110,51 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(text.count("VRAM HISTORY"), 8)
         self.assertNotIn("trend", text)
         self.assertIn("100┤", text)
-        self.assertEqual(lines[1].count("╮"), 3)
+        self.assertEqual(lines[1].count("╮"), 4)
+
+    def test_partial_final_row_redistributes_full_width(self):
+        text = render_dashboard(
+            fake_results(hosts=10),
+            color_on=False,
+            show_procs=True,
+            cmd_width=0,
+            cols=319,
+            rows=77,
+            verbose=False,
+            cmd_align="left",
+            layout="overview",
+            selected_host=0,
+            attention_only=False,
+        )
+        lines = text.splitlines()
+        last_host_row = next(line for line in lines if "10.48.40.98" in line)
+        self.assertIn("10.48.40.99", last_host_row)
+        self.assertEqual(last_host_row.count("╭─"), 2)
+        self.assertEqual(len(last_host_row), 319)
+        self.assertEqual(max(map(len, lines)), 319)
+
+    def test_sixteen_hosts_fit_as_four_by_four(self):
+        text = render_dashboard(
+            fake_results(hosts=16),
+            color_on=False,
+            show_procs=True,
+            cmd_width=0,
+            cols=319,
+            rows=70,
+            verbose=False,
+            cmd_align="left",
+            layout="overview",
+            selected_host=0,
+            attention_only=False,
+        )
+        lines = text.splitlines()
+        self.assertEqual(lines[1].count("╭─"), 4)
+        self.assertIn("10.48.40.105", text)
+        self.assertNotIn("page 1/", text)
+        self.assertEqual(text.count("UTIL RANGE"), 16)
+        self.assertEqual(text.count("THERMAL"), 16)
+        self.assertLessEqual(len(lines), 70)
+        self.assertEqual(max(map(len, lines)), 319)
 
     def test_very_wide_terminal_uses_full_host_history(self):
         results = fake_results()

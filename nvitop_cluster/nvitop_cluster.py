@@ -625,10 +625,10 @@ def _overview_geometry(
     cols: int,
     rows: int,
 ) -> Tuple[int, int, int, int, int]:
-    # Pick a grid by usable detail, not width alone.  This keeps 8-host jobs at
-    # 2x4 on a 215x58 pane, but prefers a balanced 3x3 dashboard on a large
-    # pane instead of short cards plus a half-empty screen.
-    max_columns = min(max(1, len(entries)), max(1, min(4, cols // 92)))
+    # Pick a grid by usable detail, not width alone.  Cards stay readable down
+    # to 72 columns; wide panes may therefore show 8 hosts as 4x2 and 16 hosts
+    # as 4x4 instead of leaving an unused matrix slot.
+    max_columns = min(max(1, len(entries)), max(1, min(8, cols // 72)))
     max_gpus = max(
         (len((payload or {}).get("gpus") or []) for _, _, payload, _ in entries),
         default=1,
@@ -651,12 +651,13 @@ def _overview_geometry(
         gap_width = 3 if candidate > 1 else 0
         block_width = (cols - gap_width * (candidate - 1)) // candidate
         surplus = per_block - compact_height
-        graph_lines = min(11, surplus) if surplus >= 5 else 0
-        choices.append((graph_lines, block_width, candidate, host_rows))
+        graph_lines = min(32, surplus) if surplus >= 5 else 0
+        choices.append((graph_lines, block_width, candidate, host_rows, per_block))
 
     if choices:
-        history_lines, _, columns, block_rows = max(choices, key=lambda item: (item[0], item[1]))
-        block_height = compact_height + history_lines
+        history_lines, _, columns, block_rows, block_height = max(
+            choices, key=lambda item: (item[0], item[1])
+        )
         page_size = columns * block_rows
         return columns, block_height, block_rows, page_size, history_lines
 
@@ -801,6 +802,34 @@ def _card_bottom(summary: str, width: int, color_on: bool) -> str:
     return color("╰" + inside[:inner_width] + "╯", "90", color_on)
 
 
+def _host_detail_lines(gpus: Sequence[dict], limit: int, color_on: bool) -> List[str]:
+    """Use small vertical leftovers for useful aggregates, never blank filler."""
+    if not gpus or limit <= 0:
+        return []
+    utils = [float(gpu.get("util") or 0.0) for gpu in gpus]
+    mems = []
+    temps = [float(gpu.get("temp") or 0.0) for gpu in gpus]
+    powers = [float(gpu.get("power") or 0.0) for gpu in gpus]
+    for gpu in gpus:
+        total = float(gpu.get("mem_total") or 0.0)
+        used = float(gpu.get("mem_used") or 0.0)
+        mems.append(used / total * 100.0 if total else 0.0)
+    lines = [
+        (
+            " UTIL RANGE  min "
+            + color(f"{min(utils):>3.0f}%", util_level_code(min(utils)), color_on)
+            + f"   avg {sum(utils) / len(utils):>3.0f}%   max {max(utils):>3.0f}%"
+        ),
+        (
+            " VRAM RANGE  min "
+            + color(f"{min(mems):>3.0f}%", memory_level_code(min(mems)), color_on)
+            + f"   avg {sum(mems) / len(mems):>3.0f}%   max {max(mems):>3.0f}%"
+        ),
+        f" THERMAL  {min(temps):.0f}–{max(temps):.0f}C   POWER  {sum(powers) / 1000.0:.1f}kW total",
+    ]
+    return lines[:limit]
+
+
 def _command_summary(payload: Optional[dict], width: int, align: str) -> str:
     procs = (payload or {}).get("procs") or []
     if not procs:
@@ -876,6 +905,11 @@ def _overview_block(
             + status
         )
         lines.append(_card_row(summary, width))
+        detail_lines = max(0, height - (len(gpus) + 4) - history_lines)
+        lines.extend(
+            _card_row(detail, width)
+            for detail in _host_detail_lines(gpus, min(3, detail_lines), color_on)
+        )
         lines.extend(
             _card_row(chart_line, width)
             for chart_line in _host_history_lines(
@@ -981,14 +1015,17 @@ def render_overview(
     page = selected_pos // page_size
     page_count = max(1, (len(entries) + page_size - 1) // page_size)
     visible = entries[page * page_size : (page + 1) * page_size]
-    gap = "   " if columns > 1 else ""
-    block_width = width if columns == 1 else (width - len(gap) * (columns - 1)) // columns
-
     for offset in range(0, len(visible), columns):
+        row_entries = visible[offset : offset + columns]
+        row_columns = len(row_entries)
+        gap = "   " if row_columns > 1 else ""
+        row_width = width - len(gap) * (row_columns - 1)
+        base_width, remainder = divmod(row_width, row_columns)
+        block_widths = [base_width + (1 if index < remainder else 0) for index in range(row_columns)]
         blocks = [
             _overview_block(
                 entry,
-                block_width,
+                block_widths[index],
                 block_height,
                 color_on,
                 show_procs,
@@ -997,10 +1034,8 @@ def render_overview(
                 history_lines,
                 history,
             )
-            for entry in visible[offset : offset + columns]
+            for index, entry in enumerate(row_entries)
         ]
-        while len(blocks) < columns:
-            blocks.append([" " * block_width] * block_height)
         for row in range(block_height):
             lines.append(gap.join(block[row] for block in blocks))
         if offset + columns < len(visible):
